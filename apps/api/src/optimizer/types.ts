@@ -32,6 +32,8 @@ export type PlayerCandidate = {
   targetGameweekId?: number;
   fixtureId?: number | null;
   fixtureCount?: number;
+  /** Fixtures in the target gameweek, for display only, such as "ARS (A)". */
+  opponents?: string[];
   availability?: PlayerAvailability;
   displayScore?: OptimizerDisplayScore;
 };

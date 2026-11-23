@@ -127,6 +127,7 @@ export type PlayerPrediction = {
   targetGameweekId?: number;
   fixtureId?: number | null;
   fixtureCount?: number;
+  opponents?: string[];
   availability?: PlayerAvailability;
   displayScore?: OptimizerDisplayScore;
 };

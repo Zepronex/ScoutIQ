@@ -41,9 +41,17 @@
     "test:smoke": "node --test scripts/smoke-app.test.mjs",
     "test:api": "pnpm --filter @fpl-optimizer/api run test",
     "install:all": "pnpm install",
-    "clean": "node -e \"const fs=require('fs'); for (const p of ['node_modules','apps/api/node_modules','apps/web/node_modules','apps/api/dist','apps/web/dist','apps/web/.vite']) fs.rmSync(p,{recursive:true,force:true});\""
+    "clean": "node -e \"const fs=require('fs'); for (const p of ['node_modules','apps/api/node_modules','apps/web/node_modules','apps/api/dist','apps/web/dist','apps/web/.vite']) fs.rmSync(p,{recursive:true,force:true});\"",
+    "refresh:fpl": "node scripts/refresh-fpl.mjs",
+    "test:browser": "node --test scripts/browser-app.test.mjs",
+    "test:planning-db": "pnpm --filter @fpl-optimizer/api exec tsx --test ../../scripts/planning-db.test.ts"
   },
   "devDependencies": {
-    "concurrently": "^8.2.2"
+    "playwright": "1.65.0"
+  },
+  "pnpm": {
+    "overrides": {
+      "yaml": "2.8.3"
+    }
   }
 }

@@ -10,7 +10,7 @@ from pipelines.expected_points.io import read_jsonl, write_json
 
 TRAINING_ROWS_HELP = (
     'Expected non-empty training rows at {path}. '
-    'Run pnpm.cmd run ingest:fpl:history, then pnpm.cmd run pipeline:features.'
+    'Run pnpm run ingest:fpl:history, then pnpm run pipeline:features.'
 )
 
 

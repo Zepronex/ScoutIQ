@@ -88,60 +88,60 @@ Historical rows are built from each player's fixture history. Rows for the upcom
 Run the local setup in this order:
 
 ```powershell
-pnpm.cmd install
-pnpm.cmd run ingest:fpl
-pnpm.cmd run ingest:fpl:history
-pnpm.cmd run pipeline:features
-pnpm.cmd run model:train
-pnpm.cmd run model:backtest
-pnpm.cmd run model:predict
+pnpm install
+pnpm run ingest:fpl
+pnpm run ingest:fpl:history
+pnpm run pipeline:features
+pnpm run model:train
+pnpm run model:backtest
+pnpm run model:predict
 ```
 
 Refresh deterministic bootstrap/fixture ingestion only:
 
 ```powershell
-pnpm.cmd run ingest:fpl
+pnpm run ingest:fpl
 ```
 
 Fetch official player-gameweek history for the latest normalized player list:
 
 ```powershell
-pnpm.cmd run ingest:fpl:history
+pnpm run ingest:fpl:history
 ```
 
 Build both current prediction rows and training rows:
 
 ```powershell
-pnpm.cmd run pipeline:features
+pnpm run pipeline:features
 ```
 
 Build training rows from archived deterministic snapshots instead:
 
 ```powershell
-pnpm.cmd run pipeline:features -- --historical --input data/fpl/snapshots --output data/features/player_gameweek_training_rows.jsonl
+pnpm run pipeline:features -- --historical --input data/fpl/snapshots --output data/features/player_gameweek_training_rows.jsonl
 ```
 
 Train, backtest and predict:
 
 ```powershell
-pnpm.cmd run model:train
-pnpm.cmd run model:backtest
-pnpm.cmd run model:predict
+pnpm run model:train
+pnpm run model:backtest
+pnpm run model:predict
 ```
 
 Load generated predictions into PostgreSQL after migrations and normalized FPL data are loaded:
 
 ```powershell
-pnpm.cmd run db:migrate
-pnpm.cmd run db:load:fpl
-pnpm.cmd run db:load:predictions
+pnpm run db:migrate
+pnpm run db:load:fpl
+pnpm run db:load:predictions
 ```
 
 Run the model tests:
 
 ```powershell
-pnpm.cmd run model:test
-pnpm.cmd run pipeline:test
+pnpm run model:test
+pnpm run pipeline:test
 ```
 
 Outputs are written under gitignored local paths:

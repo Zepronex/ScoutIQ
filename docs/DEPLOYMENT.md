@@ -1,66 +1,81 @@
 # Deploy ScoutIQ
 
-The rehearsed deployment uses one Node service to serve the Vite build and Express API on the same HTTPS origin. PostgreSQL stores the current FPL snapshot and projections. Run refresh jobs separately from web requests. Databricks is an independent analytics path documented in [Databricks](DATABRICKS.md).
+ScoutIQ runs as one container that serves the web app and the API on the same origin, plus a PostgreSQL 16 database. A scheduled GitHub Actions workflow refreshes the data. See [Running costs](COSTS.md) for prices and the spending safeguards.
 
-See [Production readiness](PRODUCTION_READINESS.md) for the release decision and test evidence.
-
-## Provision staging
-
-1. Choose a Node host and a PostgreSQL 16 service. The local rehearsal used Node 22.19.0, pnpm 10.15.1, Python 3.13.7 and PostgreSQL 16. Use the same versions for the first staging run. The batch runner needs Python and the workspace dependencies used by the TypeScript CLI commands.
-2. Set `DATABASE_URL` through the host's secret manager. Require verified TLS for a managed database. Set `DATABASE_SSL=true` or use the provider's verified TLS connection string. Supply the provider's CA using `NODE_EXTRA_CA_CERTS` if required. See [Environment](ENVIRONMENT.md).
-3. Configure the web service with `NODE_ENV=production`, the host-assigned `PORT`, and `SCOUTIQ_DATA_MODE=fpl`. Leave `SCOUTIQ_AGENT_ENABLED=false` to start with deterministic explanations.
-4. Route HTTPS traffic to that service. If a proxy forwards client addresses, set `SCOUTIQ_TRUST_PROXY` only to its verified IPs or CIDRs and ensure the proxy replaces untrusted forwarding headers. A reverse proxy on the same machine can use `loopback`. Verify the address configuration in staging so unrelated managers receive separate rate limits.
-5. From the repository root, install, build, migrate and load data. Set the same database credentials on the batch runner.
-
-```sh
-pnpm install --frozen-lockfile
-pnpm run build
-pnpm run db:migrate
-pnpm run refresh:fpl --fetch-history
-NODE_ENV=production SCOUTIQ_DATA_MODE=fpl pnpm --filter @fpl-optimizer/api run start
+```text
+Browser ──HTTPS──> (Cloudflare, optional) ──> ScoutIQ container ──> PostgreSQL
+                                                                      ▲
+GitHub Actions, four times a day: FPL data → projections ─────────────┘
 ```
 
-Set the build command to `pnpm install --frozen-lockfile && pnpm run build` and the start command to `pnpm --filter @fpl-optimizer/api run start` in the hosting platform. Retain both workspaces in the build. Express serves `apps/web/dist`, preserves SPA deep links and serves API paths separately. Keep `VITE_API_BASE_URL=/api` for this path.
+## 1. Create the database and service
 
-For separate hosts, configure an `/api/*` reverse proxy on the frontend or set `VITE_API_BASE_URL` to the public API URL including `/api` at web build time. Set the API's `FRONTEND_URL` to the exact browser origin and configure the static host's history fallback after its asset routes. Verify the frontend and API URLs separately. The Vercel-specific manifests have not been exercised on a hosted project.
+These steps use Railway because its bill can be hard-capped. Any host that builds a Dockerfile works the same way.
 
-## Refresh data
+1. Create a project, add a **PostgreSQL** service, then add a service from this GitHub repository. The platform builds the root `Dockerfile`.
+2. Set the service variables:
 
-`pnpm run refresh:fpl --fetch-history` captures public player, fixture and history data with four concurrent history requests, trains or evaluates when enough completed gameweeks are available, then publishes the matching FPL and projection rows in one database transaction. History remains optional early in the season. With fewer than two completed gameweeks, projections come from the prior-season fit alone. Backtests start after three. A failed publish leaves the previous snapshot in place. The publisher rejects older snapshots, mismatched input hashes, incomplete fixture coverage and targets whose deadlines have passed.
+   | Variable | Value |
+   | --- | --- |
+   | `DATABASE_URL` | The database's connection string. Use the private one for the web service. |
+   | `FRONTEND_URL` | The public origin, for example `https://scoutiq.example.com`. No path or trailing slash. |
+   | `SCOUTIQ_TRUST_PROXY` | `1`, or `2` with Cloudflare in front |
+   | `SCOUTIQ_APP_VERSION` | Optional label shown by `/api/health` |
 
-Set a scheduler on the batch runner. Refresh at least daily during the season and around deadlines so the next game's projections are loaded promptly. Set the scheduler to serialize runs, capture the exit status and alert on failures or stale data. For frequent schedule and price refreshes, reuse a same-season local history file that your history job refreshes separately.
+   `NODE_ENV=production`, `PORT=3001` and `SCOUTIQ_DATA_MODE=fpl` are already set in the image. If the host assigns its own `PORT`, the server uses it.
+3. Set the health check path to `/api/health` and keep the service at **one instance**.
+4. Set a **hard usage limit** in the workspace settings.
+5. Add your domain. For Cloudflare, proxy the DNS record and use Full (strict) TLS.
+
+The container applies database migrations each time it starts, then starts the server.
+
+## 2. Schedule the data refresh
+
+`.github/workflows/refresh.yml` runs at 05:10, 11:10, 17:10 and 23:10 UTC. Each run captures the public FPL data, fits the model, backtests it and publishes players and projections in one transaction. A failed run leaves the previous data in place.
+
+1. In the repository, add an Actions secret named `DATABASE_URL` with the database's **public** connection string.
+2. If the provider's certificate is not publicly trusted, add a repository variable `DATABASE_SSL` set to `false` only as a last resort. Prefer supplying the CA through `NODE_EXTRA_CA_CERTS`.
+3. Run the workflow once from the Actions tab. Until the secret exists every run is skipped.
+
+Scheduled workflows only run from the default branch, and GitHub pauses them after 60 days without repository activity.
+
+To refresh from your own machine instead:
 
 ```sh
-pnpm run ingest:fpl
-pnpm run ingest:fpl:history --concurrency 4
-pnpm run refresh:fpl --snapshot data/fpl/latest --history data/fpl/history/player_gameweek_history.json
-# Later, refresh only bootstrap and fixtures and reuse the history file.
-pnpm run refresh:fpl --history data/fpl/history/player_gameweek_history.json
+DATABASE_URL=postgresql://... DATABASE_SSL=true pnpm run refresh:fpl --fetch-history
 ```
 
-The browser chooses the earliest unfinished gameweek with an open deadline. It serves the matching projection run from the same source snapshot. When no run matches, player lookup and saved squads remain available. The model page displays historical backtests with their evaluation scope and timestamps.
-
-## Verify before public traffic
-
-Run the release smoke check against the staging URL. For the one-service deployment, use the same URL twice.
+## 3. Verify before sharing the link
 
 ```sh
-SCOUTIQ_API_URL=https://staging.example.com \
-SCOUTIQ_WEB_URL=https://staging.example.com \
+SCOUTIQ_API_URL=https://scoutiq.example.com \
+SCOUTIQ_WEB_URL=https://scoutiq.example.com \
 SCOUTIQ_SMOKE_REQUIRE_READY=1 pnpm run smoke:app
 ```
 
-- `/api/health` checks process liveness. Use it for the platform's restart probe.
-- `/api/ready` returns 200 for a matching FPL projection run less than 48 hours old. It returns 503 for a missing run, a stale snapshot, sample mode or unavailable PostgreSQL. Monitor it separately to distinguish a data-refresh issue from a process crash.
-- Verify HTTPS and a hard refresh on `/squad`, `/analyze`, `/top-players`, a player detail route and `/evaluation`. Check draft generation, an owned squad, a transfer with an entered selling price, and the deterministic explanation.
-- Test one consented public FPL entry on the deployed host. Confirm that the preview refers to the most recent published deadline and lets you edit picks and confirm finances. Check the host can reach the FPL endpoints and respects upstream limits.
-- Verify the scheduled refresh completes in the hosting environment and the readiness response advances to the next deadline. Once those checks pass, point the public domain to the service and rerun the smoke test against it.
+- `/api/health` reports that the process is up. Use it for the host's restart probe.
+- `/api/ready` returns 200 only when projections for the next deadline exist and the snapshot is under 48 hours old. Point an uptime monitor at it to catch a refresh that has stopped.
+- Open `/squad`, generate a draft, open the gameweek plan and compare a transfer.
+- Import one public FPL team by its ID to confirm the host can reach the FPL servers.
+- Request `/api/players` from two different networks and check that `RateLimit-Remaining` counts separately. If it does not, `SCOUTIQ_TRUST_PROXY` is wrong.
 
-If a code release fails, redeploy the last known working build and rerun the smoke check. For a failed refresh, inspect the batch exit and retry with a fresh official snapshot. If data is corrupt, restore a database backup into a separate instance and verify readiness and the browser journey before switching connections.
+## Alternative: one server with Docker Compose
 
-## Reproduce offline with synthetic data
+On a small VPS, with a reverse proxy such as Caddy terminating TLS on the same machine:
 
-Use a disposable database with no user data. With Docker Compose and the local defaults, start PostgreSQL and use a port that is free. When changing `POSTGRES_PORT`, remove any local `DATABASE_URL` override or update its port.
+```sh
+cp .env.example .env        # set POSTGRES_PASSWORD and FRONTEND_URL
+SCOUTIQ_TRUST_PROXY=loopback docker compose --profile app up -d --build
+```
+
+The app listens on `127.0.0.1:3001` and PostgreSQL on `127.0.0.1:5432`, so neither is reachable from outside. Point the refresh workflow at the database through an SSH tunnel, or run `pnpm run refresh:fpl --fetch-history` from cron on the server. Back up the `postgres-data` volume.
+
+## Roll back
+
+- **Bad release:** redeploy the previous image or commit, then rerun the smoke check. Migrations only add tables, so an older build runs against a newer schema.
+- **Bad data:** rerun the refresh. Each run replaces the current snapshot. If the FPL feed itself is wrong, the previous projections stay in place until a later run succeeds.
+
+## Rehearse locally with synthetic data
 
 ```sh
 export POSTGRES_PORT=55432
@@ -74,13 +89,12 @@ pnpm run build
 NODE_ENV=production SCOUTIQ_DATA_MODE=sample pnpm --filter @fpl-optimizer/api run start
 ```
 
-In another terminal, run the test with the built app's URL.
+In another terminal:
 
 ```sh
 pnpm exec playwright install chromium
 SCOUTIQ_WEB_URL=http://localhost:3001 SCOUTIQ_BROWSER_FIXTURE=1 pnpm run test:browser
 POSTGRES_PORT=55432 SCOUTIQ_BROWSER_FIXTURE=1 pnpm run test:planning-db
-SCOUTIQ_API_URL=http://localhost:3001 SCOUTIQ_WEB_URL=http://localhost:3001 pnpm run smoke:app
 ```
 
-Set `SCOUTIQ_BROWSER_CHANNEL=chrome` if using an existing Google Chrome installation. Sample mode supports the local planner with an explicit banner. Its release readiness stays 503 and public entry lookups are disabled. The browser suite uses local responses to test the import UI.
+CI runs the same journey on every pull request. Sample mode shows a banner, disables public team import and keeps `/api/ready` at 503.

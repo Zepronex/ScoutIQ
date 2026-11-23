@@ -182,10 +182,10 @@ class ExpectedPointsFoundationTests(unittest.TestCase):
     def test_missing_training_rows_have_actionable_train_and_backtest_errors(self) -> None:
         missing_path = 'missing-training-rows.jsonl'
 
-        with self.assertRaisesRegex(FileNotFoundError, 'Run pnpm.cmd run ingest:fpl:history, then pnpm.cmd run pipeline:features'):
+        with self.assertRaisesRegex(FileNotFoundError, 'Run pnpm run ingest:fpl:history, then pnpm run pipeline:features'):
             train_main(['--input', missing_path])
 
-        with self.assertRaisesRegex(FileNotFoundError, 'Run pnpm.cmd run ingest:fpl:history, then pnpm.cmd run pipeline:features'):
+        with self.assertRaisesRegex(FileNotFoundError, 'Run pnpm run ingest:fpl:history, then pnpm run pipeline:features'):
             backtest_main(['--input', missing_path])
 
 

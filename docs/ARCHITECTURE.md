@@ -55,16 +55,16 @@ flowchart LR
 
 The ingestion entry points live in `apps/api/src/ingestion`.
 
-- `pnpm.cmd run ingest:fpl` fetches public bootstrap and fixture data.
-- `pnpm.cmd run ingest:fpl:history` fetches public player gameweek history.
+- `pnpm run ingest:fpl` fetches public bootstrap and fixture data.
+- `pnpm run ingest:fpl:history` fetches public player gameweek history.
 - Normalized records are written under `data/fpl/latest` and `data/fpl/history`.
 - The manifest preserves source URLs, fetch timestamps, season metadata, record counts, and a deterministic snapshot hash.
 
 PostgreSQL loading is handled by `apps/api/src/db`.
 
-- `pnpm.cmd run db:migrate` applies SQL files from `db/migrations`.
-- `pnpm.cmd run db:load:fpl` loads teams, players, gameweeks, fixtures, and ingestion run metadata.
-- `pnpm.cmd run db:load:predictions` loads prediction runs, player predictions, and model evaluation summaries.
+- `pnpm run db:migrate` applies SQL files from `db/migrations`.
+- `pnpm run db:load:fpl` loads teams, players, gameweeks, fixtures, and ingestion run metadata.
+- `pnpm run db:load:predictions` loads prediction runs, player predictions, and model evaluation summaries.
 
 The database gives the API a stable serving layer while local pipeline artifacts remain gitignored.
 
@@ -153,32 +153,32 @@ The dashboard is a transparency surface. It does not claim model superiority unl
 The default reviewer and development path is:
 
 ```powershell
-pnpm.cmd install
+pnpm install
 if (!(Test-Path .env)) { Copy-Item .env.example .env }
 if (!(Test-Path apps\api\.env)) { Copy-Item apps\api\.env.example apps\api\.env }
 docker compose up -d postgres
-pnpm.cmd run db:migrate
-pnpm.cmd run ingest:fpl
-pnpm.cmd run db:load:fpl
-pnpm.cmd run ingest:fpl:history
-pnpm.cmd run pipeline:features
-pnpm.cmd run model:train
-pnpm.cmd run model:backtest
-pnpm.cmd run model:predict
-pnpm.cmd run db:load:predictions
-pnpm.cmd run dev:app
+pnpm run db:migrate
+pnpm run ingest:fpl
+pnpm run db:load:fpl
+pnpm run ingest:fpl:history
+pnpm run pipeline:features
+pnpm run model:train
+pnpm run model:backtest
+pnpm run model:predict
+pnpm run db:load:predictions
+pnpm run dev:app
 ```
 
-`pnpm.cmd run dev:app` starts the API and web app only. It does not require an OpenAI API key.
+`pnpm run dev:app` starts the API and web app only. It does not require an OpenAI API key.
 
 Useful local validation commands:
 
 ```powershell
-pnpm.cmd run build:api
-pnpm.cmd run test:api
-pnpm.cmd run test:smoke
-pnpm.cmd run pipeline:test
-pnpm.cmd run model:test
-pnpm.cmd run build
-pnpm.cmd run build:web
+pnpm run build:api
+pnpm run test:api
+pnpm run test:smoke
+pnpm run pipeline:test
+pnpm run model:test
+pnpm run build
+pnpm run build:web
 ```

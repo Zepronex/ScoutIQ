@@ -49,11 +49,11 @@ describe('prediction load plan', () => {
   it('prints the required setup commands when prediction output is missing', () => {
     const message = buildMissingPredictionArtifactsMessage('data/predictions/missing.jsonl');
 
-    assert.match(message, /pnpm\.cmd run ingest:fpl:history/);
-    assert.match(message, /pnpm\.cmd run pipeline:features/);
-    assert.match(message, /pnpm\.cmd run model:train/);
-    assert.match(message, /pnpm\.cmd run model:backtest/);
-    assert.match(message, /pnpm\.cmd run model:predict/);
+    assert.match(message, /pnpm run ingest:fpl:history/);
+    assert.match(message, /pnpm run pipeline:features/);
+    assert.match(message, /pnpm run model:train/);
+    assert.match(message, /pnpm run model:backtest/);
+    assert.match(message, /pnpm run model:predict/);
   });
 });
 

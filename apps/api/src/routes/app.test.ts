@@ -91,3 +91,28 @@ it('sends security headers and allows only the configured browser origin', async
     await new Promise<void>(resolve => server.close(() => resolve()));
   }
 });
+
+it('separates visitors by forwarded address when one proxy hop is trusted', async () => {
+  process.env.SCOUTIQ_TRUST_PROXY = '1';
+  const server = createApp().listen(0, '127.0.0.1');
+  delete process.env.SCOUTIQ_TRUST_PROXY;
+  await new Promise<void>(resolve => server.once('listening', resolve));
+  try {
+    const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api/entries/import`;
+    const post = (address: string) => fetch(url, {
+      method: 'POST',
+      // A client can prepend anything; only the entry the proxy appended counts.
+      headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': `198.51.100.99, ${address}` },
+      body: JSON.stringify({ entryId: 'not-a-number' })
+    });
+    for (let attempt = 0; attempt < 10; attempt += 1) assert.equal((await post('203.0.113.1')).status, 400);
+    assert.equal((await post('203.0.113.1')).status, 429);
+    assert.equal((await post('203.0.113.2')).status, 400);
+    assert.throws(() => {
+      process.env.SCOUTIQ_TRUST_PROXY = 'true';
+      try { createApp(); } finally { delete process.env.SCOUTIQ_TRUST_PROXY; }
+    }, /hop count/);
+  } finally {
+    await new Promise<void>(resolve => server.close(() => resolve()));
+  }
+});

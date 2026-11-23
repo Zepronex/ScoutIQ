@@ -1,14 +1,54 @@
-# ScoutIQ production readiness
+# ScoutIQ release readiness
 
-**Ready for staging.** The production Node build, PostgreSQL 16 setup, official 2026–27 Gameweek 11 data path and local browser journeys were exercised. Public release depends on the host, managed database TLS, proxy addresses, scheduled refresh and one live public-entry import. Follow the [deployment runbook](DEPLOYMENT.md).
+**Ready to deploy.** Follow the [deployment guide](DEPLOYMENT.md). The checks that need the real host are listed at the end of this page.
 
-## Baseline
+This report has two parts: the November 23 pass that prepared the release, and the earlier November 11 playtest it built on.
+
+## 23 November 2026: release pass
+
+Verified against the official 2026-27 Gameweek 12 data captured that day (674 players, 380 fixtures, 7,236 player-fixture history rows).
+
+| Area | Problem found | Change |
+| --- | --- | --- |
+| Projections | The rule model weighted three-game form at 55%. A £5.5m forward outranked every premium player and a generated draft left £14.6m unspent. Backtest MAE was worse than the benchmark (1.36 against 1.23). | Replaced by a ridge regression seeded with 2025-26. MAE 1.21 and RMSE 2.07 against 1.23 and 2.31. Serving features are now built the same way as training features. |
+| Draft squads | With realistic projections the greedy builder started a non-playing goalkeeper beside three premium players. | Budget knapsack per position and formation with club-limit repair. About 80 ms on the full player pool. |
+| Language-model cost | With a provider enabled, anyone could forward up to 512 KB of arbitrary text per request, with no output cap. | Every field bounded, 1,200 output tokens, 200 provider calls a day for all visitors. |
+| Abuse | Limits were per address only, responses were uncompressed (174 KB), and every request hit the database. | Global ceilings, gzip (16 KB), shared read caches, pruning of old runs. See [Running costs](COSTS.md). |
+| Rate limits behind a proxy | All visitors would have shared one address and one limit on a hosting platform. | `SCOUTIQ_TRUST_PROXY` accepts a hop count. |
+| Operations | No container image, no scheduled refresh, no shutdown handling. Python scripts failed on macOS. | Dockerfile, refresh workflow, SIGTERM handling, interpreter launcher. |
+| Interface | Decimal commas beside pound signs in non-English browsers, a lineup shown as tinted pills, a model page written for pipeline reviewers. | New visual system, lineup drawn on a pitch with fixtures and short names, model page rewritten in plain language. |
+
+### Results
+
+| Check | Result |
+| --- | --- |
+| `pnpm run build`, `pnpm run security:frontend` | Passed |
+| `pnpm run test:api` | 104 passed |
+| `pnpm run model:test`, `pipeline:test`, `databricks:snapshot:test`, `resume:metrics:test` | 14, 22, 6 and 2 passed |
+| `pnpm run test:browser` on live data and on the synthetic fixture | 6 and 7 passed |
+| `pnpm run test:planning-db`, `pnpm run smoke:app` with readiness required | Passed |
+| Production image | Built, 258 MB. Served the app with 33 MB of memory, passed the release smoke check, exited cleanly on SIGTERM. |
+| `pnpm audit --prod` | No known vulnerabilities |
+
+`databricks:test` (PySpark) passed 9 of 9 with `SCOUTIQ_PYTHON=.venv/bin/python SPARK_LOCAL_IP=127.0.0.1`.
+
+### Still to check on the real host
+
+- HTTPS and the custom domain.
+- `SCOUTIQ_TRUST_PROXY`: two networks should see separate `RateLimit-Remaining` counts.
+- The scheduled refresh reaching the managed database over TLS.
+- One import of a real public FPL team.
+- The platform's hard spending limit is set.
+
+## 11 November 2026: playtest
+
+### Baseline
 
 The worktree started clean on `dev`. The existing dependency directory lacked `express-slow-down`. A frozen install restored the API. Using a disposable database loaded with the archived 2025–26 snapshot, the original browser flow added 15 players by name and reached the analysis and optimizer. All 82 original API tests passed. The routes covered home, squad, top players, analysis, player detail and model evaluation. The API also exposed draft generation, fixture-level prediction endpoints and optional explanation providers. The archived data contained 841 projection rows for Gameweek 38.
 
 The current-season check captured official bootstrap and fixture data on 11 November 2026 at 22:57 UTC. After fixing nullable team strength, that capture produced 672 players, 20 teams, 38 events and 380 fixtures. One history capture yielded 6,562 player-gameweek rows. Subsequent repetitions replayed these local files or used synthetic fixtures. The next FPL deadline was 21 November 2026 at 11:00 UTC, which the Stockholm browser displayed as 12:00.
 
-## Findings
+### Findings
 
 | Severity | Reproduction and expected behavior | Observed cause | Change and evidence |
 | --- | --- | --- | --- |
@@ -23,18 +63,18 @@ The current-season check captured official bootstrap and fixture data on 11 Nove
 | Medium | Rehearse the built app with a deep link and a real JavaScript entry. | The smoke helper required a development source path and could accept a page whose rewrite swallowed its assets. | The helper validates both Vite modes and checks the entry's content type. The Node service serves the built SPA and separates API and asset errors. |
 | Medium | Review an XI when the optional explanation service fails. | An explanation request ran automatically after every optimizer result. | Explanation is on demand with a retry. Browser checks kept the lineup visible through a simulated failure and displayed the deterministic fallback on retry. |
 
-## FPL checks
+### FPL checks
 
 - Drafts have 2 goalkeepers, 5 defenders, 5 midfielders and 3 forwards under a £100.0m initial budget and a three-player club cap. Existing squads can be shown after a real-world club move, but a recommended transfer must restore the club limit. [Official squad guide](https://www.premierleague.com/en/news/2174419)
 - The XI has one goalkeeper, at least three defenders and at least one forward. The goalkeeper substitute is separate from the outfield priority. Captain and vice-captain are distinct starters. Projected totals count the captain twice and do not simulate automatic substitutions. [Official team-management guide](https://www.premierleague.com/en/news/2174899/fpl-basics-managing-your-team)
 - FPL can bank up to five free transfers and charges four points per extra move. ScoutIQ uses entered selling prices for owned players. The fixture sold at £5.8m and bought at £6.5m, used £0.7m exactly, and returned +6 points after a four-point hit. [Official transfers guide](https://www.premierleague.com/en/news/2174907/1000), [FPL FAQs](https://fantasy.premierleague.com/help/faqs)
 - The stored fixture schedule supplies the target horizon. An unassigned rescheduled fixture is excluded. A scheduled double counts both fixtures and a confirmed blank contributes zero. Missing projections remain unavailable. [Official fixture feed](https://fantasy.premierleague.com/api/fixtures/)
 
-The transfer planner ranks the best valid option for each allowed count of one or two moves on the same gameweek horizon. It also shows keeping the squad. Draft generation is a heuristic with a feasibility fallback. The planner's scope is standard captaincy and the next open gameweek. Chip effects, multi-gameweek strategy and private FPL account synchronization are outside that scope. Public picks are a deadline snapshot and may include a temporary squad from a chip. Always reconcile later moves, bank and selling prices in the official game.
+The transfer planner ranks the best valid option for each allowed count of one or two moves on the same gameweek horizon. It also shows keeping the squad. Draft generation was a heuristic at the time and has since been replaced. The planner's scope is standard captaincy and the next open gameweek. Chip effects, multi-gameweek strategy and private FPL account synchronization are outside that scope. Public picks are a deadline snapshot and may include a temporary squad from a chip. Always reconcile later moves, bank and selling prices in the official game.
 
 The local Gameweek 11 replay backtested 5,326 predictions from completed gameweeks. MAE was 1.3685 versus 1.2268 for the recent-points baseline. RMSE was 2.2457 versus 2.3049. The measures point in different directions. These are snapshot-specific historical metrics.
 
-## Verification and remaining work
+### Verification at the time
 
 The [browser suite](../scripts/browser-app.test.mjs) exercises desktop and phone draft or manual entry, persistent squads, keyboard navigation, filters and pagination, provisional import, finance inputs, lineup and transfer comparisons, missing data and retries. The import suite uses synthetic upstream responses. [PostgreSQL fixture tests](../scripts/planning-db.test.ts) exercise actual serving queries against the sample database and roll their changes back.
 

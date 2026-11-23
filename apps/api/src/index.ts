@@ -25,7 +25,7 @@ export function createApp(): express.Express {
   const windowMs = 15 * 60 * 1000;
   const limitedResponse = { success: false, error: 'Too many requests. Try again when the rate limit resets.' };
   const trustedProxies = readTrustedProxies(process.env.SCOUTIQ_TRUST_PROXY);
-  if (trustedProxies.length) app.set('trust proxy', trustedProxies);
+  if (typeof trustedProxies === 'number' || trustedProxies.length) app.set('trust proxy', trustedProxies);
 
   app.use(helmet({
     contentSecurityPolicy: {
@@ -144,8 +144,13 @@ function readFrontendOrigin(value: string | undefined): string {
   throw new Error('FRONTEND_URL must be an HTTP or HTTPS origin with no path or trailing slash.');
 }
 
-function readTrustedProxies(value: string | undefined): string[] {
+// Without this setting every visitor behind a proxy shares one address, and so
+// one rate limit. Hosting platforms rarely publish fixed proxy addresses, so a
+// hop count is accepted as well: 1 for the platform's proxy alone, 2 when a CDN
+// sits in front of it. Each counted hop must overwrite X-Forwarded-For.
+function readTrustedProxies(value: string | undefined): string[] | number {
   if (!value) return [];
+  if (/^[1-5]$/.test(value.trim())) return Number(value.trim());
   return value.split(',').map(proxy => {
     const entry = proxy.trim();
     if (entry === 'loopback') return entry;
@@ -153,7 +158,7 @@ function readTrustedProxies(value: string | undefined): string[] {
     const family = isIP(address);
     if (!rest.length && family && (bits === undefined ||
       (/^\d+$/.test(bits) && Number(bits) > 0 && Number(bits) <= (family === 4 ? 32 : 128)))) return entry;
-    throw new Error('SCOUTIQ_TRUST_PROXY must contain trusted IPs, CIDRs or loopback.');
+    throw new Error('SCOUTIQ_TRUST_PROXY must be a hop count from 1 to 5, or trusted IPs, CIDRs or loopback.');
   });
 }
 

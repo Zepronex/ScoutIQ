@@ -14,6 +14,7 @@ from pipelines.databricks.transforms import (
     build_silver_tables,
     dataset_snapshot_hash,
     read_ingestion_dataset,
+    select_next_gameweek_id,
     validate_ingestion_dataset
 )
 
@@ -79,6 +80,22 @@ class DatabricksPipelineTransformTests(unittest.TestCase):
         self.assertNotIn('team_a_score', alpha)
         self.assertNotIn('target_points', alpha)
 
+    def test_gameweek_selection_uses_the_deadline_instead_of_stale_flags(self) -> None:
+        first = {
+            'gameweek_id': 1, 'finished': False, 'is_next': True,
+            'deadline_time': '2026-08-14T18:30:00+01:00',
+        }
+        second = {**first, 'gameweek_id': 2, 'deadline_time': '2026-08-21T17:30:00Z', 'is_next': False}
+        for timestamp, expected in (
+            ('2026-08-14T17:29:59Z', 1),
+            ('2026-08-14T17:30:00Z', 2),
+            ('2026-08-14T17:30:01Z', 2),
+            ('2026-08-21T17:30:00Z', None),
+        ):
+            with self.subTest(timestamp=timestamp):
+                rows = [{**event, 'source_generated_at': timestamp} for event in [second, first]]
+                self.assertEqual(select_next_gameweek_id(rows), expected)
+
     def test_validation_rejects_manifest_count_mismatch(self) -> None:
         dataset = sample_dataset()
         dataset['manifest'] = {
@@ -136,7 +153,7 @@ def sample_dataset() -> dict[str, object]:
         'manifest': {
             'schemaVersion': 1,
             'season': '2026-27',
-            'generatedAt': '2026-07-02T10:00:00.000Z',
+            'generatedAt': '2026-08-15T10:00:00.000Z',
             'currentEventId': 1,
             'sources': [
                 {

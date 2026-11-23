@@ -94,7 +94,7 @@ export function normalizeBootstrapStatic(rawBootstrap: RawBootstrapStatic): Norm
     players,
     teams,
     events,
-    currentEventId: bootstrap.current_event ?? null
+    currentEventId: bootstrap.current_event ?? events.find(event => event.isCurrent)?.id ?? null
   };
 }
 
@@ -128,10 +128,12 @@ export function buildNormalizedFplDataset(params: {
 }): NormalizedFplDataset {
   const bootstrap = normalizeBootstrapStatic(params.rawBootstrap);
   const fixtures = normalizeFixtures(params.rawFixtures);
+  const opener = bootstrap.events.find(event => event.id === 1);
+  const openingYear = opener ? new Date(opener.deadlineTime).getUTCFullYear() : null;
 
   const manifest: FplIngestionManifest = {
     schemaVersion: 1,
-    season: params.season ?? null,
+    season: params.season?.trim() || (openingYear === null ? null : `${openingYear}-${(openingYear + 1) % 100}`),
     generatedAt: normalizeDateTime(params.generatedAt),
     currentEventId: bootstrap.currentEventId,
     sources: params.sources,

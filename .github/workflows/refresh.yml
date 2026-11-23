@@ -1,0 +1,78 @@
+name: Refresh FPL data
+
+# Captures the public FPL data, rebuilds projections and publishes both to the
+# production database. It needs one repository secret, DATABASE_URL, with the
+# same value the web service uses. Without the secret every run is skipped.
+
+on:
+  schedule:
+    # 05:10, 11:10, 17:10 and 23:10 UTC. Prices change overnight and most
+    # deadlines fall in the late morning or early evening UK time.
+    - cron: "10 5,11,17,23 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: refresh-fpl
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    name: Publish current gameweek
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_SSL: ${{ vars.DATABASE_SSL || 'true' }}
+
+    steps:
+      - name: Check for the database secret
+        id: config
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "DATABASE_URL is not set for this repository. Skipping the refresh."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check out repository
+        if: steps.config.outputs.ready == 'true'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Set up pnpm
+        if: steps.config.outputs.ready == 'true'
+        uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+        with:
+          version: 10.18.1
+          run_install: false
+
+      - name: Set up Node.js
+        if: steps.config.outputs.ready == 'true'
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Set up Python
+        if: steps.config.outputs.ready == 'true'
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Node dependencies
+        if: steps.config.outputs.ready == 'true'
+        run: pnpm install --frozen-lockfile
+
+      - name: Apply database migrations
+        if: steps.config.outputs.ready == 'true'
+        run: pnpm run db:migrate
+
+      - name: Capture, model and publish
+        if: steps.config.outputs.ready == 'true'
+        run: pnpm run refresh:fpl --fetch-history

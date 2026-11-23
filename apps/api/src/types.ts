@@ -4,6 +4,7 @@ export type Pos = 'GK' | 'DEF' | 'MID' | 'FWD';
 
 export type EnrichedPlayer = {
   id: number;
+  code?: number | null;
   name: string;
   teamId: number;
   teamShort: string;
@@ -24,17 +25,20 @@ export type EnrichedPlayer = {
 
 export type SquadSlot = {
   id: number;
+  code?: number | null;
   pos: Pos;
   price: number;
   name?: string;
   teamShort?: string;
   teamId?: number;
+  sellingPrice?: number;
 };
 
 export type Squad = {
   startingXI: SquadSlot[];
   bench: SquadSlot[];
   bank: number;
+  mode?: 'draft' | 'existing';
 };
 
 export type Suggestion = {

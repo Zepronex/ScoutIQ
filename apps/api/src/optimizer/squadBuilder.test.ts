@@ -25,6 +25,24 @@ describe('squad builder', () => {
 
     assert.equal(squad.bank >= 2, true);
   });
+
+  it('finds a legal draft when cheap keepers compete with forwards for the same club slots', () => {
+    const candidates = [
+      ...candidatesFixture().filter(player => player.position === 'DEF' || player.position === 'MID')
+        .map(player => ({ ...player, teamId: player.teamId + 10, price: 4 })),
+      candidate(101, 'Cheap keeper A', 'GK', 1, 4, 6),
+      candidate(102, 'Cheap keeper B', 'GK', 1, 4, 5),
+      candidate(103, 'Other keeper A', 'GK', 2, 5, 4),
+      candidate(104, 'Other keeper B', 'GK', 2, 5, 3),
+      candidate(105, 'Forward A', 'FWD', 1, 4, 8),
+      candidate(106, 'Forward B', 'FWD', 1, 4, 7),
+      candidate(107, 'Forward C', 'FWD', 1, 4, 6)
+    ];
+    const squad = buildSquadFromCandidates({ candidates, budget: 62 });
+    assert.deepEqual(squad.slots.filter(player => player.position === 'GK').map(player => player.playerId), [103, 104]);
+    assert.equal(squad.bank, 0);
+    assert.throws(() => buildSquadFromCandidates({ candidates, budget: 61.9 }), /squad_generation_failed/);
+  });
 });
 
 function candidatesFixture(): PlayerCandidate[] {

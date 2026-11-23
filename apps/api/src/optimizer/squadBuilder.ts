@@ -26,7 +26,12 @@ export function buildSquadFromCandidates(input: SquadOptimizationInput): Squad {
   while (selected.length < FPL_RULES.squadSize) {
     const next = candidates.find(candidate => canSelectCandidate(candidate, selected, candidates, maxSpend));
     if (!next) {
-      throw new Error('squad_generation_failed');
+      const completion = cheapestLegalCompletion(selected, candidates);
+      if (!completion || calculateSquadCost([...selected, ...completion]) > maxSpend) {
+        throw new Error('squad_generation_failed');
+      }
+      selected.push(...completion);
+      break;
     }
     selected.push(next);
   }
@@ -47,6 +52,75 @@ export function buildSquadFromCandidates(input: SquadOptimizationInput): Squad {
   }
 
   return squad;
+}
+
+type Edge = { to: number; cost: number; capacity: number; reverse: number };
+
+// A minimum-cost flow reserves the remaining position and club slots together
+// when the greedy budget check cannot find a completion.
+function cheapestLegalCompletion(
+  selected: readonly PlayerCandidate[], candidates: readonly PlayerCandidate[]
+): PlayerCandidate[] | null {
+  const selectedIds = new Set(selected.map(player => player.playerId));
+  const eligible = [...new Map(candidates.filter(player => !selectedIds.has(player.playerId))
+    .map(player => [player.playerId, player])).values()];
+  const needed = remainingPositionCounts(selected);
+  const teamCounts = countByTeam(selected);
+  const source = 0;
+  const positionNodes = new Map(OPTIMIZER_POSITIONS.map((position, index) => [position, index + 1]));
+  const clubs = [...new Set(eligible.map(player => player.teamId))];
+  const teamNodes = new Map(clubs.map((team, index) => [team, index + positionNodes.size + 1]));
+  const sink = positionNodes.size + teamNodes.size + 1;
+  const graph: Edge[][] = Array.from({ length: sink + 1 }, () => []);
+
+  const connect = (from: number, to: number, capacity: number, cost = 0): Edge => {
+    const forward = { to, cost, capacity, reverse: graph[to].length };
+    graph[to].push({ to: from, cost: -cost, capacity: 0, reverse: graph[from].length });
+    graph[from].push(forward);
+    return forward;
+  };
+  for (const [position, node] of positionNodes) connect(source, node, needed[position]);
+  for (const [team, node] of teamNodes) connect(node, sink, FPL_RULES.maxPlayersPerTeam - (teamCounts.get(team) ?? 0));
+  const playerEdges = eligible.map(player => ({
+    player,
+    edge: connect(positionNodes.get(player.position)!, teamNodes.get(player.teamId)!, 1, Math.round(player.price * 10))
+  }));
+
+  for (let remaining = FPL_RULES.squadSize - selected.length; remaining > 0; remaining -= 1) {
+    if (!augmentCheapestPath(graph, source, sink)) return null;
+  }
+  return playerEdges.filter(({ edge }) => edge.capacity === 0).map(({ player }) => player);
+}
+
+function augmentCheapestPath(graph: Edge[][], source: number, sink: number): boolean {
+  const distance = graph.map(() => Number.POSITIVE_INFINITY);
+  const previous: Array<{ from: number; edge: Edge } | undefined> = [];
+  distance[source] = 0;
+
+  // Residual edges can refund a prior player selection, so use Bellman-Ford.
+  for (let pass = 0; pass < graph.length - 1; pass += 1) {
+    let changed = false;
+    for (const [from, edges] of graph.entries()) {
+      for (const edge of edges) {
+        const cost = distance[from] + edge.cost;
+        if (edge.capacity > 0 && cost < distance[edge.to]) {
+          distance[edge.to] = cost;
+          previous[edge.to] = { from, edge };
+          changed = true;
+        }
+      }
+    }
+    if (!changed) break;
+  }
+
+  if (!previous[sink]) return false;
+  for (let node = sink; node !== source;) {
+    const step = previous[node]!;
+    step.edge.capacity -= 1;
+    graph[node][step.edge.reverse].capacity += 1;
+    node = step.from;
+  }
+  return true;
 }
 
 function canSelectCandidate(

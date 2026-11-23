@@ -53,7 +53,7 @@ function handleAgentRouteError(res: Response, error: unknown): void {
     res.status(400).json({
       success: false,
       error: 'invalid_agent_request',
-      details: error.errors
+      details: error.issues
     });
     return;
   }

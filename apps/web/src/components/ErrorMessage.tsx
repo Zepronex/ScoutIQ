@@ -31,7 +31,7 @@ const ErrorMessage = ({
   };
 
   return (
-    <div className={`rounded-lg border p-4 ${typeStyles[type]}`}>
+    <div className={`rounded-lg border p-4 ${typeStyles[type]}`} role={type === 'error' ? 'alert' : 'status'}>
       <div className="flex items-start">
         <AlertCircle className={`h-5 w-5 mt-0.5 mr-3 ${iconStyles[type]}`} />
         <div className="flex-1">
@@ -49,6 +49,7 @@ const ErrorMessage = ({
         </div>
         {onDismiss && (
           <button
+            aria-label="Dismiss message"
             onClick={onDismiss}
             className="ml-2 text-gray-400 hover:text-gray-600 transition-colors"
           >

@@ -1,4 +1,5 @@
-import { comparePlayerCandidates, optimizeStartingXi } from './startingXi';
+import { Pos } from '../types';
+import { optimizeStartingXi } from './startingXi';
 import {
   PlayerCandidate,
   Squad,
@@ -7,117 +8,162 @@ import {
   TransferOptimizationInput,
   TransferRecommendation
 } from './types';
-import { roundMoney, validateSquad } from './rules';
+import {
+  countByTeam,
+  FPL_RULES,
+  getSellingPrice,
+  OPTIMIZER_POSITIONS,
+  roundMoney,
+  VALID_FORMATION_ORDER,
+  VALID_FORMATIONS,
+  validateSquad
+} from './rules';
 
-const POINTS_PER_TRANSFER_HIT = 4;
+const POINTS_PER_HIT = 4;
+const CLUB_LIMIT = FPL_RULES.maxPlayersPerTeam;
+
+type Incoming = { player: PlayerCandidate; cost: number };
+type BestPlan = { moves: TransferMove[]; gain: number; cost: number; key: string };
 
 export function recommendTransfers(input: TransferOptimizationInput): TransferRecommendation[] {
-  const currentStartingXi = optimizeStartingXi(input.currentSquad);
-  const maxHits = input.maxHits ?? 0;
+  const baseline = optimizeStartingXi(input.currentSquad).totalPredictedPoints;
+  const currentIds = new Set(input.currentSquad.slots.map(player => player.playerId));
+  const eligible = input.availablePlayers.filter(player =>
+    !currentIds.has(player.playerId) && player.availability !== 'unavailable'
+  );
+  const incomingByPosition = new Map(OPTIMIZER_POSITIONS.map(position => [
+    position, eligible.filter(player => player.position === position)
+  ]));
+
   const recommendations: TransferRecommendation[] = [];
-
-  const oneTransfer = bestRecommendationForCount(input, 1, currentStartingXi.totalPredictedPoints, maxHits);
-  if (oneTransfer) recommendations.push(oneTransfer);
-
-  const twoTransfer = bestRecommendationForCount(input, 2, currentStartingXi.totalPredictedPoints, maxHits);
-  if (twoTransfer) recommendations.push(twoTransfer);
-
-  return recommendations;
-}
-
-function bestRecommendationForCount(
-  input: TransferOptimizationInput,
-  transferCount: 1 | 2,
-  currentProjectedPoints: number,
-  maxHits: number
-): TransferRecommendation | null {
-  if (!isTransferCountAllowed(transferCount, input.freeTransfers, maxHits)) return null;
-
-  const recommendations = transferCount === 1
-    ? enumerateSingleTransfers(input, currentProjectedPoints)
-    : enumerateDoubleTransfers(input, currentProjectedPoints);
-
-  return recommendations.sort(compareTransferRecommendations)[0] ?? null;
-}
-
-function enumerateSingleTransfers(
-  input: TransferOptimizationInput,
-  currentProjectedPoints: number
-): TransferRecommendation[] {
-  const currentPlayerIds = new Set(input.currentSquad.slots.map(player => player.playerId));
-  const candidates = filterIncomingCandidates(input.availablePlayers, currentPlayerIds);
-  const recommendations: TransferRecommendation[] = [];
-
-  for (const playerOut of input.currentSquad.slots) {
-    for (const playerIn of candidates.filter(candidate => candidate.position === playerOut.position)) {
-      const recommendation = buildRecommendation({
-        currentSquad: input.currentSquad,
-        moves: [toTransferMove(playerOut, playerIn)],
-        freeTransfers: input.freeTransfers,
-        currentProjectedPoints
-      });
-      if (recommendation) recommendations.push(recommendation);
-    }
+  for (const count of [1, 2] as const) {
+    const paidTransfers = Math.max(0, count - input.freeTransfers);
+    if (paidTransfers > (input.maxHits ?? 0)) continue;
+    const hit = paidTransfers * POINTS_PER_HIT;
+    const best = findBestPlan(input.currentSquad, incomingByPosition, count, baseline, hit);
+    if (best) recommendations.push(buildRecommendation(input.currentSquad, best, count, baseline, hit));
   }
-
   return recommendations;
 }
 
-function enumerateDoubleTransfers(
-  input: TransferOptimizationInput,
-  currentProjectedPoints: number
-): TransferRecommendation[] {
-  const currentPlayerIds = new Set(input.currentSquad.slots.map(player => player.playerId));
-  const candidates = filterIncomingCandidates(input.availablePlayers, currentPlayerIds);
-  const recommendations: TransferRecommendation[] = [];
+function findBestPlan(
+  squad: Squad,
+  incomingByPosition: ReadonlyMap<Pos, PlayerCandidate[]>,
+  count: 1 | 2,
+  baseline: number,
+  hit: number
+): BestPlan | undefined {
+  const optionsBySlot = squad.slots.map(player => (incomingByPosition.get(player.position) ?? [])
+    .map(incoming => ({ player: incoming, cost: Math.round((incoming.price - getSellingPrice(player)) * 10) })));
+  const bank = Math.round(squad.bank * 10);
+  let best: BestPlan | undefined;
 
-  for (let firstOutIndex = 0; firstOutIndex < input.currentSquad.slots.length; firstOutIndex += 1) {
-    for (let secondOutIndex = firstOutIndex + 1; secondOutIndex < input.currentSquad.slots.length; secondOutIndex += 1) {
-      const firstOut = input.currentSquad.slots[firstOutIndex];
-      const secondOut = input.currentSquad.slots[secondOutIndex];
-      const firstPositionCandidates = candidates.filter(candidate => candidate.position === firstOut.position);
-      const secondPositionCandidates = candidates.filter(candidate => candidate.position === secondOut.position);
+  for (const [index, firstOut] of squad.slots.entries()) {
+    const secondIndices = count === 1 ? [-1] : squad.slots.keys();
+    for (const secondIndex of secondIndices) {
+      if (count === 2 && secondIndex <= index) continue;
+      const secondOut = squad.slots[secondIndex];
+      const retained = squad.slots.filter((_, i) => i !== index && i !== secondIndex);
+      const teamCounts = countByTeam(retained);
+      if ([...teamCounts.values()].some(size => size > CLUB_LIMIT)) continue;
 
-      for (const firstIn of firstPositionCandidates) {
-        for (const secondIn of secondPositionCandidates) {
-          if (firstIn.playerId === secondIn.playerId) continue;
+      const hasSpace = ({ player }: Incoming) => (teamCounts.get(player.teamId) ?? 0) < CLUB_LIMIT;
+      const firstOptions = optionsBySlot[index].filter(hasSpace);
+      const secondOptions = secondOut ? optionsBySlot[secondIndex].filter(hasSpace) : [undefined];
+      const score = buildLineupScorer(retained);
+      for (const first of firstOptions) {
+        for (const second of secondOptions) {
+          const cost = first.cost + (second?.cost ?? 0);
+          if (cost > bank) continue;
+          if (second && (first.player.playerId === second.player.playerId ||
+            (first.player.teamId === second.player.teamId &&
+              (teamCounts.get(first.player.teamId) ?? 0) > CLUB_LIMIT - 2))) continue;
 
-          const recommendation = buildRecommendation({
-            currentSquad: input.currentSquad,
-            moves: [toTransferMove(firstOut, firstIn), toTransferMove(secondOut, secondIn)],
-            freeTransfers: input.freeTransfers,
-            currentProjectedPoints
-          });
-          if (recommendation) recommendations.push(recommendation);
+          const gain = roundPoints(roundPoints(score(first.player, second?.player)) - baseline);
+          if (gain <= hit || (best && (gain < best.gain || (gain === best.gain && cost > best.cost)))) continue;
+
+          const moves = [toMove(firstOut, first)];
+          if (second && secondOut) moves.push(toMove(secondOut, second));
+          const key = moves.map(move =>
+            `${move.playerOut.playerId}:${move.playerIn.playerName}:${move.playerIn.playerId}`
+          ).join('|');
+          if (best && gain === best.gain && cost === best.cost && key.localeCompare(best.key) >= 0) continue;
+          best = { moves, gain, cost, key };
         }
       }
     }
   }
-
-  return recommendations;
+  return best;
 }
 
-function buildRecommendation(params: {
-  currentSquad: Squad;
-  moves: TransferMove[];
-  freeTransfers: number;
-  currentProjectedPoints: number;
-}): TransferRecommendation | null {
-  const budgetImpact = roundMoney(params.moves.reduce((sum, move) => sum + move.costDelta, 0));
-  const bankAfterTransfers = roundMoney(params.currentSquad.bank - budgetImpact);
-  if (bankAfterTransfers < 0) return null;
+// For each set of players sold, precompute what is already on the pitch in every
+// formation. Buying a player replaces the lowest-scoring starter in that position
+// or fills a vacant spot. The highest-scoring player can captain every formation.
+function buildLineupScorer(retained: SquadSlot[]) {
+  const byPosition = {} as Record<Pos, number[]>;
+  for (const position of OPTIMIZER_POSITIONS) {
+    byPosition[position] = retained.filter(player => player.position === position)
+      .map(player => player.predictedPoints).sort((left, right) => right - left);
+  }
+  const topRetained = Math.max(...retained.map(player => player.predictedPoints));
+  const formations = VALID_FORMATION_ORDER.map(formation => {
+    const counts = VALID_FORMATIONS[formation];
+    const total = OPTIMIZER_POSITIONS.reduce((sum, position) =>
+      sum + byPosition[position].slice(0, counts[position]).reduce((points, value) => points + value, 0), 0);
+    return { counts, total };
+  });
 
-  const squadAfterTransfers = applyTransferMoves(params.currentSquad, params.moves, bankAfterTransfers);
-  const validation = validateSquad(squadAfterTransfers);
-  if (!validation.valid) return null;
+  return (first: PlayerCandidate, second?: PlayerCandidate): number => {
+    const firstPoints = first.predictedPoints;
+    const secondPoints = second?.predictedPoints ?? 0;
+    const samePosition = first.position === second?.position;
+    const firstGroup = byPosition[first.position];
+    const secondGroup = second ? byPosition[second.position] : [];
+    let best = 0;
+    for (const { counts, total } of formations) {
+      const firstCount = counts[first.position];
+      const firstCutoff = firstGroup[firstCount - 1] ?? 0;
+      let added = Math.max(0, firstPoints - firstCutoff);
+      if (samePosition) {
+        added = Math.max(0, Math.max(firstPoints, secondPoints) - firstCutoff);
+        if (firstCount >= 2) added += Math.max(0, Math.min(firstPoints, secondPoints) - (firstGroup[firstCount - 2] ?? 0));
+      } else if (second) {
+        added += Math.max(0, secondPoints - (secondGroup[counts[second.position] - 1] ?? 0));
+      }
+      best = Math.max(best, total + added);
+    }
+    return best + Math.max(topRetained, firstPoints, secondPoints);
+  };
+}
 
-  const startingXi = optimizeStartingXi(squadAfterTransfers);
-  const expectedPointsGain = roundPoints(startingXi.totalPredictedPoints - params.currentProjectedPoints);
-  const pointsHit = Math.max(0, params.moves.length - params.freeTransfers) * POINTS_PER_TRANSFER_HIT;
-
+function toMove(out: SquadSlot, incoming: Incoming): TransferMove {
   return {
-    transferCount: params.moves.length as 1 | 2,
-    moves: params.moves,
+    playerOut: out,
+    playerIn: incoming.player,
+    predictedPointsDelta: roundPoints(incoming.player.predictedPoints - out.predictedPoints),
+    costDelta: incoming.cost / 10
+  };
+}
+
+function buildRecommendation(
+  currentSquad: Squad, plan: BestPlan, transferCount: 1 | 2, baseline: number, pointsHit: number
+): TransferRecommendation {
+  const replacements = new Map(plan.moves.map(move => [move.playerOut.playerId, move.playerIn]));
+  const budgetImpact = plan.cost / 10;
+  const bankAfterTransfers = roundMoney(currentSquad.bank - budgetImpact);
+  const squadAfterTransfers: Squad = {
+    ...currentSquad,
+    bank: bankAfterTransfers,
+    slots: currentSquad.slots.map(slot => {
+      const replacement = replacements.get(slot.playerId);
+      return replacement ? { ...replacement, slotIndex: slot.slotIndex } : slot;
+    })
+  };
+  const startingXi = optimizeStartingXi(squadAfterTransfers);
+  const expectedPointsGain = roundPoints(startingXi.totalPredictedPoints - baseline);
+  return {
+    transferCount,
+    moves: plan.moves,
     expectedPointsGain,
     pointsHit,
     netExpectedPointsGain: roundPoints(expectedPointsGain - pointsHit),
@@ -125,80 +171,8 @@ function buildRecommendation(params: {
     bankAfterTransfers,
     squadAfterTransfers,
     startingXi,
-    validation
+    validation: validateSquad(squadAfterTransfers)
   };
-}
-
-function applyTransferMoves(currentSquad: Squad, moves: TransferMove[], bank: number): Squad {
-  const replacements = new Map<number, PlayerCandidate>();
-  for (const move of moves) {
-    replacements.set(move.playerOut.playerId, move.playerIn);
-  }
-
-  return {
-    budget: currentSquad.budget,
-    bank,
-    slots: currentSquad.slots.map(slot => {
-      const replacement = replacements.get(slot.playerId);
-      return replacement ? toSquadSlot(replacement, slot.slotIndex) : slot;
-    })
-  };
-}
-
-function filterIncomingCandidates(
-  availablePlayers: readonly PlayerCandidate[],
-  currentPlayerIds: ReadonlySet<number>
-): PlayerCandidate[] {
-  return availablePlayers
-    .filter(player => !currentPlayerIds.has(player.playerId))
-    .filter(player => player.availability !== 'unavailable')
-    .sort(comparePlayerCandidates);
-}
-
-function toTransferMove(playerOut: SquadSlot, playerIn: PlayerCandidate): TransferMove {
-  return {
-    playerOut,
-    playerIn,
-    predictedPointsDelta: roundPoints(playerIn.predictedPoints - playerOut.predictedPoints),
-    costDelta: roundMoney(playerIn.price - playerOut.price)
-  };
-}
-
-function toSquadSlot(player: PlayerCandidate, slotIndex: number): SquadSlot {
-  return {
-    ...player,
-    slotIndex
-  };
-}
-
-function isTransferCountAllowed(transferCount: number, freeTransfers: number, maxHits: number): boolean {
-  const paidTransfers = Math.max(0, transferCount - freeTransfers);
-  return paidTransfers <= maxHits;
-}
-
-function compareTransferRecommendations(
-  left: TransferRecommendation,
-  right: TransferRecommendation
-): number {
-  if (right.netExpectedPointsGain !== left.netExpectedPointsGain) {
-    return right.netExpectedPointsGain - left.netExpectedPointsGain;
-  }
-
-  if (right.expectedPointsGain !== left.expectedPointsGain) {
-    return right.expectedPointsGain - left.expectedPointsGain;
-  }
-
-  if (left.budgetImpact !== right.budgetImpact) {
-    return left.budgetImpact - right.budgetImpact;
-  }
-
-  return transferKey(left).localeCompare(transferKey(right));
-}
-
-function transferKey(recommendation: TransferRecommendation): string {
-  return recommendation.moves
-    .map(move => `${move.playerOut.playerId}:${move.playerIn.playerName}:${move.playerIn.playerId}`)
-    .join('|');
 }
 
 function roundPoints(value: number): number {

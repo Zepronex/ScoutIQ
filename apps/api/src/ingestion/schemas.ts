@@ -48,9 +48,9 @@ export const RawFplTeamSchema = z.object({
   code: z.number().int().positive().optional(),
   name: z.string().min(1),
   short_name: z.string().min(1),
-  strength: z.number().int().optional(),
-  strength_overall_home: z.number().int().optional(),
-  strength_overall_away: z.number().int().optional()
+  strength: z.number().int().nullish(),
+  strength_overall_home: z.number().int().nullish(),
+  strength_overall_away: z.number().int().nullish()
 }).passthrough();
 
 export const RawFplEventSchema = z.object({

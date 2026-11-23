@@ -1,157 +1,80 @@
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
-import { useState, useEffect, Suspense, lazy } from 'react';
-import { AlertTriangle } from 'lucide-react';
+import { BrowserRouter, Routes, Route, Link, NavLink, useLocation } from 'react-router-dom';
+import { useEffect, useRef, Suspense, lazy } from 'react';
 import GlobalPlayerSearch from './components/GlobalPlayerSearch';
 import LoadingSpinner from './components/LoadingSpinner';
-import { apiClient } from './lib/api';
 import { useSquad } from './state/useSquad';
-
-// main pages loaded directly for instant navigation
+import { usePlanning } from './state/usePlanning';
 import HomePage from './pages/HomePage';
 import SquadPage from './pages/SquadPage';
+import TopPlayersPage from './pages/TopPlayersPage';
 
-// secondary pages lazy loaded to reduce initial bundle size
 const AnalyzePage = lazy(() => import('./pages/AnalyzePage'));
 const EvaluationPage = lazy(() => import('./pages/EvaluationPage'));
 const PlayerDetailPage = lazy(() => import('./pages/PlayerDetailPage'));
 
-// Import TopPlayersPage directly to avoid lazy loading issues
-import TopPlayersPage from './pages/TopPlayersPage';
+const links = [
+  ['/squad', 'Squad'],
+  ['/top-players', 'Players'],
+  ['/analyze', 'Gameweek plan'],
+  ['/evaluation', 'Model']
+];
 
-// lightweight loading spinner for page transitions
-const FastLoadingSpinner = () => (
-  <div className="flex items-center justify-center min-h-[200px]">
-    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-fpl-green"></div>
-  </div>
-);
+function ScoutIQ() {
+  const squad = useSquad();
+  const planning = usePlanning();
+  const { pathname } = useLocation();
+  const main = useRef<HTMLElement>(null);
+  const previousPath = useRef(pathname);
 
-function App() {
-  const [isApiConnected, setIsApiConnected] = useState<boolean | null>(null);
-  const squadState = useSquad();
-
-  // check api connection on app startup
   useEffect(() => {
-    const checkApiConnection = async () => {
-      try {
-        await apiClient.healthCheck();
-        setIsApiConnected(true);
-      } catch {
-        setIsApiConnected(false);
-      }
-    };
-
-    checkApiConnection();
-  }, []);
-
-  if (isApiConnected === null) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50">
-        <LoadingSpinner size="lg" text="Connecting to API..." />
-      </div>
-    );
-  }
-
-  if (isApiConnected === false) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-red-50">
-        <div className="text-center max-w-md mx-auto p-6">
-          <AlertTriangle className="h-12 w-12 text-red-500 mx-auto mb-4" />
-          <h1 className="text-2xl font-bold text-red-800 mb-2">API Connection Failed</h1>
-          <p className="text-red-600 mb-4">
-            Unable to connect to the ScoutIQ API. Please make sure the API server is running on port 3001.
-          </p>
-          <button 
-            onClick={() => window.location.reload()} 
-            className="btn-primary"
-          >
-            Retry Connection
-          </button>
-        </div>
-      </div>
-    );
-  }
+    if (previousPath.current === pathname) return;
+    previousPath.current = pathname;
+    window.scrollTo(0, 0);
+    main.current?.focus({ preventScroll: true });
+  }, [pathname]);
 
   return (
-    <Router>
-      <div className="min-h-screen bg-gray-50">
-        <header className="bg-white shadow-sm border-b border-gray-200">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-            <div className="flex items-center h-16">
-              <div className="flex items-center">
-                <h1 className="text-2xl font-bold text-fpl-dark">
-                  ScoutIQ
-                </h1>
-              </div>
-              
-              {/* Global Player Search - Left of Nav */}
-              <div className="w-80 ml-8">
-                <GlobalPlayerSearch />
-              </div>
-              
-              <div className="w-4"></div>
-              
-              <nav className="flex space-x-6 ml-auto">
-                <a 
-                  href="/squad" 
-                  className="text-gray-600 hover:text-fpl-dark transition-colors font-medium"
-                >
-                  Squad Builder
-                </a>
-                <a 
-                  href="/top-players" 
-                  className="text-gray-600 hover:text-fpl-dark transition-colors font-medium"
-                >
-                  Top Players
-                </a>
-                <a 
-                  href="/analyze" 
-                  className="text-gray-600 hover:text-fpl-dark transition-colors font-medium"
-                >
-                  Team Analysis
-                </a>
-                <a
-                  href="/evaluation"
-                  className="text-gray-600 hover:text-fpl-dark transition-colors font-medium"
-                >
-                  Evaluation
-                </a>
-                <a
-                  href="/" 
-                  className="text-gray-600 hover:text-fpl-dark transition-colors font-medium"
-                >
-                  Home
-                </a>
-              </nav>
-            </div>
+    <div className="min-h-screen">
+      <a className="skip-link" href="#content">Skip to content</a>
+      <header className="site-header">
+        <div className="mx-auto grid max-w-7xl grid-cols-[auto_minmax(0,1fr)] items-center gap-x-4 px-4 pt-4 sm:px-6 lg:grid-cols-[auto_1fr_16rem] lg:gap-10 lg:py-0">
+          <Link to="/" aria-label="ScoutIQ home" className="flex w-fit items-center gap-2 self-center py-1 text-xl font-bold tracking-tight text-white">
+            <span className="brand-mark" aria-hidden="true"><span /></span>
+            ScoutIQ
+          </Link>
+          <div className="min-w-0 lg:col-start-3 lg:row-start-1">
+            <GlobalPlayerSearch />
           </div>
-        </header>
-
-        <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-          <Suspense fallback={<FastLoadingSpinner />}>
-            <Routes>
-              <Route path="/" element={<HomePage />} />
-              <Route path="/squad" element={<SquadPage squadState={squadState} />} />
-              <Route path="/top-players" element={<TopPlayersPage />} />
-              <Route path="/analyze" element={<AnalyzePage />} />
-              <Route path="/evaluation" element={<EvaluationPage />} />
-              <Route path="/player/:id" element={<PlayerDetailPage />} />
-            </Routes>
-          </Suspense>
-        </main>
-
-        <footer className="bg-white border-t border-gray-200 mt-16">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-            <div className="text-center text-gray-500 text-sm">
-              <p>ScoutIQ - Local Fantasy Premier League decision support</p>
-              <p className="mt-1">
-                Data provided by the official Fantasy Premier League API
-              </p>
-            </div>
-          </div>
-        </footer>
-      </div>
-    </Router>
+          <nav aria-label="Main navigation" className="col-span-2 mt-2 grid grid-cols-4 gap-1 lg:col-span-1 lg:col-start-2 lg:row-start-1 lg:mt-0 lg:flex">
+            {links.map(([url, label]) => <NavLink key={url} className="nav-link" to={url}>{label}</NavLink>)}
+          </nav>
+        </div>
+      </header>
+      {planning.data?.source === 'sample' && (
+        <p className="border-b border-amber-300 bg-amber-100 px-4 py-2 text-center text-sm font-semibold text-amber-950">
+          Sample data for practice. Check the official FPL game before making changes.
+        </p>
+      )}
+      <main ref={main} id="content" tabIndex={-1} className="mx-auto max-w-7xl px-4 py-6 outline-none sm:px-6 sm:py-10">
+        <Suspense fallback={<LoadingSpinner text="Loading page…" />}>
+          <Routes>
+            <Route path="/" element={<HomePage planning={planning} />} />
+            <Route path="/squad" element={<SquadPage squadState={squad} planning={planning} />} />
+            <Route path="/top-players" element={<TopPlayersPage planning={planning} />} />
+            <Route path="/analyze" element={<AnalyzePage squad={squad.squad} planning={planning} />} />
+            <Route path="/evaluation" element={<EvaluationPage />} />
+            <Route path="/player/:id" element={<PlayerDetailPage squadState={squad} planning={planning} />} />
+            <Route path="*" element={<div className="card"><h1 className="page-title">Page not found</h1><Link className="text-link mt-3 inline-block" to="/">Return to ScoutIQ</Link></div>} />
+          </Routes>
+        </Suspense>
+      </main>
+      <footer className="mx-auto max-w-7xl px-4 py-8 text-sm text-slate-600 sm:px-6">
+        ScoutIQ is an independent Fantasy Premier League planning tool.
+      </footer>
+    </div>
   );
 }
 
-export default App;
+export default function App() {
+  return <BrowserRouter><ScoutIQ /></BrowserRouter>;
+}

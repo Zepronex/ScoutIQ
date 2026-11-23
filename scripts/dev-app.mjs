@@ -8,7 +8,10 @@ const root = process.cwd();
 const processes = [
   {
     name: 'api',
-    args: ['--filter', '@fpl-optimizer/api', 'run', 'dev']
+    args: ['--filter', '@fpl-optimizer/api', 'run', 'dev'],
+    // The web dev server proxies /api to 3001. Pin the API there so a PORT
+    // exported by the shell or a preview host cannot put both on one port.
+    env: { PORT: process.env.SCOUTIQ_API_PORT || '3001' }
   },
   {
     name: 'web',
@@ -142,7 +145,7 @@ function stopChild(child, signal) {
 }
 
 for (const processConfig of processes) {
-  const childEnv = buildChildEnv();
+  const childEnv = { ...buildChildEnv(), ...processConfig.env };
   const pnpmInvocation = resolvePnpmInvocation(childEnv);
   const child = spawn(pnpmInvocation.command, [...pnpmInvocation.argsPrefix, ...processConfig.args], {
     cwd: root,

@@ -9,9 +9,11 @@ This reference covers configuration used by the current ScoutIQ codebase and the
 | `NODE_ENV` | API error handling | Optional | Recommended | No | No | Use `production` for hosted API runtime. Development mode can include error details. |
 | `PORT` | API server | Optional | Required when the host sets an expected port | No | No | Defaults to `3001` locally. |
 | `FRONTEND_URL` | API CORS | Optional | Required for a deployed frontend origin | No | No | Defaults to `http://localhost:3000`; set to the deployed frontend origin before production traffic. |
+| `SCOUTIQ_DATA_MODE` | API and UI | Optional | Use `fpl` for public FPL captures | No | No | Set `sample` for synthetic data. It displays a practice banner, disables public pick import and returns 503 readiness. |
+| `SCOUTIQ_TRUST_PROXY` | Express client IP | Optional | Only when behind a verified proxy | No | No | Comma-separated trusted IPs/CIDRs or `loopback`. Keep empty for direct traffic. |
 | `SCOUTIQ_APP_VERSION` | API health response | Optional | Optional | No | No | Adds a safe version label to `GET /api/health`. |
 | `DATABASE_URL` | API database config and database scripts | Optional when component variables are set | Required unless component variables are set | No | Yes | Preferred production setting because most managed PostgreSQL providers expose one URL. |
-| `DATABASE_SSL` | API database config | Optional | Required when the database provider requires SSL | No | No | Accepts truthy values such as `true`, `1`, `yes`, or `on`. |
+| `DATABASE_SSL` | API database config | Optional | Required when the database provider requires SSL | No | No | Enables verified TLS. Use the provider’s CA via `NODE_EXTRA_CA_CERTS` when needed. |
 | `POSTGRES_HOST` | API database config | Optional | Alternative to `DATABASE_URL` | No | No | Defaults to `localhost` when `DATABASE_URL` is absent. |
 | `POSTGRES_PORT` | API database config and Docker Compose | Optional | Alternative to `DATABASE_URL` | No | No | Defaults to `5432`. |
 | `POSTGRES_DB` | API database config and Docker Compose | Optional | Alternative to `DATABASE_URL` | No | No | Defaults to `scoutiq`. |
@@ -27,9 +29,11 @@ This reference covers configuration used by the current ScoutIQ codebase and the
 | `AZURE_OPENAI_ENDPOINT` | Azure OpenAI explanation provider | No | Optional | Required for Azure mode | No | Endpoint URL for the Azure OpenAI resource. |
 | `AZURE_OPENAI_DEPLOYMENT` | Azure OpenAI explanation provider | No | Optional | Required for Azure mode unless `AZURE_OPENAI_MODEL` is set | No | Preferred Azure deployment variable. |
 | `AZURE_OPENAI_MODEL` | Azure OpenAI explanation provider | No | Optional | Alternative Azure deployment variable | No | Current code accepts this as a fallback for `AZURE_OPENAI_DEPLOYMENT`. |
-| `FPL_SEASON` | FPL ingestion | Optional | Batch job only | No | No | Optional season label for ingestion when `--season` is not passed. |
+| `FPL_SEASON` | FPL ingestion | Optional | Batch job only | No | No | Optional season override. The importer normally infers it from the Gameweek 1 deadline. |
 | `SCOUTIQ_API_URL` | Smoke test script | Optional | Deployment smoke checks only | No | No | Defaults to `http://localhost:3001`; set to deployed API base URL for smoke checks. |
 | `SCOUTIQ_WEB_URL` | Smoke test script | Optional | Deployment smoke checks only | No | No | Defaults to `http://localhost:3000`; set to deployed frontend base URL for smoke checks. |
+| `SCOUTIQ_SMOKE_REQUIRE_READY` | Smoke test script | Optional | Use `1` for a public release smoke check | No | No | Requires current, non-sample projections. |
+| `SCOUTIQ_PYTHON` | Refresh script | Optional | Batch job only | No | No | Defaults to `python3` on Unix and `python` on Windows. |
 | `SCOUTIQ_SMOKE_TIMEOUT_MS` | Smoke test script | Optional | Deployment smoke checks only | No | No | Defaults to `5000`. |
 
 ## Frontend Variables
@@ -38,8 +42,7 @@ This reference covers configuration used by the current ScoutIQ codebase and the
 
 | Variable | Current status | Notes |
 | --- | --- | --- |
-| `VITE_API_BASE_URL` | Example-only | The current web client hardcodes relative `/api` requests in `apps/web/src/lib/api.ts`. A separate-origin deployment must use `/api` rewrites or update the client before relying on this variable. |
-| `VITE_APP_NAME` | Example-only | Not read by the current web code. |
+| `VITE_API_BASE_URL` | Build-time | Defaults to `/api`. For a separate API host use its public URL including `/api` and configure `FRONTEND_URL`. Treat all `VITE_*` values as public. |
 
 ## Reserved Or Example-Only API Variables
 

@@ -46,7 +46,7 @@ describe('players route', () => {
 
     assert.equal(response.status, 503);
     assert.equal(response.body.success, false);
-    assert.match(response.body.error, /No prediction-backed player candidates are loaded/);
+    assert.match(response.body.error, /FPL player list is unavailable/);
     assert.deepEqual(response.body.requiredCommands, PLAYER_CANDIDATE_REQUIRED_COMMANDS);
   });
 

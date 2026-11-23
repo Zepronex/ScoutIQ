@@ -3,7 +3,11 @@ import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import slowDown from 'express-slow-down';
-import dotenv from 'dotenv';
+import { existsSync } from 'node:fs';
+import { isIP } from 'node:net';
+import path from 'node:path';
+import { getServerPool } from './db/client';
+import { readPlanningWindow } from './db/predictionQueries';
 import { playersRouter } from './routes/players';
 import { analyzeRouter } from './routes/analyze';
 import { predictionsRouter } from './routes/predictions';
@@ -12,110 +16,133 @@ import { evaluationRouter } from './routes/evaluation';
 import { optimizerRouter } from './routes/optimizer';
 import { agentRouter } from './routes/agent';
 import { healthRouter } from './routes/health';
+import { entriesRouter } from './routes/entries';
 
-dotenv.config();
+export function createApp(): express.Express {
+  const app = express();
+  const windowMs = 15 * 60 * 1000;
+  const limitedResponse = { success: false, error: 'Too many requests. Try again when the rate limit resets.' };
+  const trustedProxies = readTrustedProxies(process.env.SCOUTIQ_TRUST_PROXY);
+  if (trustedProxies.length) app.set('trust proxy', trustedProxies);
 
-const app = express();
-const PORT = process.env.PORT || 3001;
+  app.use(helmet({
+    contentSecurityPolicy: {
+      directives: {
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        imgSrc: ["'self'", "data:", "https:"]
+      }
+    }
+  }));
 
-// Rate limiting configuration
-const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // Limit each IP to 100 requests per windowMs
-  message: {
-    error: 'Too many requests from this IP, please try again later.',
-    retryAfter: '15 minutes'
-  },
-  standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
-  legacyHeaders: false, // Disable the `X-RateLimit-*` headers
-});
-
-// Slow down configuration for repeated requests
-const speedLimiter = slowDown({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  delayAfter: 50, // Allow 50 requests per 15 minutes, then...
-  delayMs: () => 500, // Add 500ms delay per request above 50
-  maxDelayMs: 20000, // Maximum delay of 20 seconds
-});
-
-// Middleware
-app.use(helmet({
-  contentSecurityPolicy: {
-    directives: {
-      defaultSrc: ["'self'"],
-      styleSrc: ["'self'", "'unsafe-inline'"],
-      scriptSrc: ["'self'"],
-      imgSrc: ["'self'", "data:", "https:"],
-    },
-  },
-}));
-
-app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:3000',
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE'],
-  allowedHeaders: ['Content-Type', 'Authorization']
-}));
-
-app.use(express.json({ limit: '10mb' })); // Limit request body size
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
-
-// Apply rate limiting
-app.use(limiter);
-app.use(speedLimiter);
-
-// Stricter rate limiting for expensive operations
-const strictLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 10, // Only 10 team generations per 15 minutes per IP
-  message: {
-    error: 'Too many team generations. Please wait before generating another team.',
-    retryAfter: '15 minutes'
-  },
-  skipSuccessfulRequests: true, // Don't count successful requests
-});
-
-// Apply strict rate limiting to expensive endpoints
-app.use('/api/analyze', strictLimiter);
-app.use('/api/optimizer', strictLimiter);
-app.use('/api/agent', strictLimiter);
-
-// Routes
-app.use('/api/players', playersRouter);
-app.use('/api/analyze', analyzeRouter);
-app.use('/api/predictions', predictionsRouter);
-app.use('/api/model', modelRouter);
-app.use('/api/evaluation', evaluationRouter);
-app.use('/api/optimizer', optimizerRouter);
-app.use('/api/agent', agentRouter);
-app.use('/api/health', healthRouter);
-
-// Request logging middleware
-app.use((req: express.Request, res: express.Response, next: express.NextFunction) => {
-  const timestamp = new Date().toISOString();
-  next();
-});
-
-// Error handling
-app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
-  // Don't leak error details in production
-  const isDevelopment = process.env.NODE_ENV === 'development';
-  
-  res.status(500).json({
-    error: 'Internal server error',
-    ...(isDevelopment && { details: err.message })
+  app.use('/api', cors({
+    origin: readFrontendOrigin(process.env.FRONTEND_URL),
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+    exposedHeaders: ['Retry-After']
+  }));
+  app.use('/api/health', healthRouter);
+  app.get('/api/ready', rateLimit({
+    windowMs: 60_000, limit: 60, standardHeaders: true, legacyHeaders: false, message: limitedResponse
+  }), async (_req, res) => {
+    res.set('Cache-Control', 'no-store');
+    try {
+      const window = await readPlanningWindow(getServerPool());
+      const status = process.env.SCOUTIQ_DATA_MODE === 'sample' ? 'sample_data'
+        : !window?.gameweek.runId ? 'waiting_for_projections'
+        : Date.now() - Date.parse(window.gameweek.sourceUpdatedAt) > 48 * 60 * 60 * 1000 ? 'stale_snapshot'
+        : 'ready';
+      return res.status(status === 'ready' ? 200 : 503).json({
+        status,
+        gameweek: window?.gameweek ?? null
+      });
+    } catch {
+      return res.status(503).json({ status: 'database_unavailable' });
+    }
   });
-});
 
-// 404 handler
-app.use('*', (req: express.Request, res: express.Response) => {
-  res.status(404).json({
-    error: 'Endpoint not found',
-    path: req.originalUrl
+  app.use('/api', rateLimit({ windowMs, limit: 100, standardHeaders: true, legacyHeaders: false, message: limitedResponse }));
+  app.use('/api', slowDown({ windowMs, delayAfter: 50, delayMs: () => 500, maxDelayMs: 20000 }));
+
+  const limitPlanning = (limit = 10) => rateLimit({
+    windowMs, limit, standardHeaders: true, legacyHeaders: false,
+    skip: req => req.method !== 'POST',
+    message: limitedResponse
   });
-});
+  app.use('/api/analyze', limitPlanning());
+  app.use('/api/optimizer/squad', limitPlanning());
+  app.use('/api/optimizer/transfers', limitPlanning());
+  app.use('/api/optimizer/starting-xi', limitPlanning(30));
+  app.use('/api/agent', limitPlanning());
+  app.use('/api/entries', limitPlanning());
+  app.use('/api', express.json({ limit: '512kb' }));
+  app.use('/api', express.urlencoded({ extended: true, limit: '512kb' }));
 
-app.listen(PORT, () => {
-  // ScoutIQ API started
-});
+  app.use('/api/players', playersRouter);
+  app.use('/api/analyze', analyzeRouter);
+  app.use('/api/predictions', predictionsRouter);
+  app.use('/api/model', modelRouter);
+  app.use('/api/evaluation', evaluationRouter);
+  app.use('/api/optimizer', optimizerRouter);
+  app.use('/api/agent', agentRouter);
+  app.use('/api/entries', entriesRouter);
+  app.use('/api', (_req, res) => res.status(404).json({ success: false, error: 'Endpoint not found' }));
 
+  const webDist = path.resolve(__dirname, '../../web/dist');
+  const index = path.join(webDist, 'index.html');
+  if (existsSync(index)) {
+    app.use('/assets', express.static(path.join(webDist, 'assets'), { maxAge: '1y', immutable: true }));
+    app.use(express.static(webDist, { index: false }));
+    app.get('*', (req, res, next) => {
+      if (!req.accepts('html') || req.path.startsWith('/assets/') || path.extname(req.path)) return next();
+      res.set('Cache-Control', 'no-cache');
+      return res.sendFile(index);
+    });
+  }
+
+  app.use((err: { type?: string }, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+    if (err.type === 'entity.too.large') {
+      return res.status(413).json({ success: false, error: 'Request is too large.' });
+    }
+    if (err.type === 'entity.parse.failed') {
+      return res.status(400).json({ success: false, error: 'Invalid JSON.' });
+    }
+    return res.status(500).json({ success: false, error: 'Internal server error' });
+  });
+  return app;
+}
+
+function readFrontendOrigin(value: string | undefined): string {
+  const origin = value || 'http://localhost:3000';
+  try {
+    const url = new URL(origin);
+    if (url.origin === origin && ['http:', 'https:'].includes(url.protocol)) return url.origin;
+  } catch {
+    // Use a configuration error that omits the supplied value.
+  }
+  throw new Error('FRONTEND_URL must be an HTTP or HTTPS origin with no path or trailing slash.');
+}
+
+function readTrustedProxies(value: string | undefined): string[] {
+  if (!value) return [];
+  return value.split(',').map(proxy => {
+    const entry = proxy.trim();
+    if (entry === 'loopback') return entry;
+    const [address, bits, ...rest] = entry.split('/');
+    const family = isIP(address);
+    if (!rest.length && family && (bits === undefined ||
+      (/^\d+$/.test(bits) && Number(bits) > 0 && Number(bits) <= (family === 4 ? 32 : 128)))) return entry;
+    throw new Error('SCOUTIQ_TRUST_PROXY must contain trusted IPs, CIDRs or loopback.');
+  });
+}
+
+const app = createApp();
+export default app;
+
+if (require.main === module) {
+  const port = Number(process.env.PORT || 3001);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('PORT must be an integer between 1 and 65535.');
+  const mode = process.env.SCOUTIQ_DATA_MODE;
+  if (mode && mode !== 'sample' && mode !== 'fpl') throw new Error('SCOUTIQ_DATA_MODE must be fpl or sample.');
+  app.listen(port, () => console.log(`ScoutIQ listening on port ${port}`));
+}

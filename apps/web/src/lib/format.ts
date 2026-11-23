@@ -1,16 +1,7 @@
 import { PlayerLabel, Pos } from './types';
 
 export const formatPrice = (price: number): string => {
-  // Round to avoid floating point precision issues
-  const rounded = Math.round(price * 10) / 10;
-  
-  // If the decimal part is 0, show as whole number
-  if (rounded % 1 === 0) {
-    return `GBP ${rounded.toFixed(0)}m`;
-  }
-  
-  // Otherwise show with 1 decimal place
-  return `GBP ${rounded.toFixed(1)}m`;
+  return `${price < 0 ? '−' : ''}£${Math.abs(price).toFixed(1)}m`;
 };
 
 export const formatScore = (score: number): string => {
@@ -162,3 +153,23 @@ export const getFormationString = (startingXI: FormationSlot[]): string => {
   return `${defCount}-${midCount}-${fwdCount}`;
 };
 
+
+export const positionNames: Record<Pos, string> = {
+  GK: 'Goalkeepers', DEF: 'Defenders', MID: 'Midfielders', FWD: 'Forwards'
+};
+
+export function normalizePlayerSearch(value: string): string {
+  return value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+}
+
+const pointsFormatter = new Intl.NumberFormat(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 2 });
+
+export const formatPoints = (points: number) => pointsFormatter.format(points);
+
+export function predictionAvailability(player: { fixtureCount?: number; availability?: string }): string {
+  if (player.fixtureCount === 0) return 'No fixture';
+  if (player.availability === 'unavailable') return 'Unavailable';
+  if (player.availability === 'doubtful') return 'Doubtful';
+  if (player.fixtureCount && player.fixtureCount > 1) return `${player.fixtureCount} fixtures`;
+  return player.availability === 'available' ? 'Available' : 'Availability unknown';
+}

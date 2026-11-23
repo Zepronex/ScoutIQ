@@ -1,5 +1,6 @@
 import { Queryable } from './client';
 import { EnrichedPlayer, FPLStatus, Pos } from '../types';
+import { PlayerCandidate } from '../optimizer/types';
 
 export const PLAYER_CANDIDATE_REQUIRED_COMMANDS = [
   'docker compose up -d postgres',
@@ -16,6 +17,7 @@ export const PLAYER_CANDIDATE_REQUIRED_COMMANDS = [
 
 type PlayerCandidateDbRow = {
   id: number;
+  code?: number | null;
   display_name: string;
   team_id: number;
   team_short: string;
@@ -33,29 +35,17 @@ type PlayerCandidateDbRow = {
   next_3_ease: number;
 };
 
-export async function readSquadBuilderPlayers(client: Queryable): Promise<EnrichedPlayer[]> {
+export async function readSquadBuilderPlayers(client: Queryable, snapshotId?: number): Promise<EnrichedPlayer[]> {
   const result = await client.query<PlayerCandidateDbRow>(`
-    WITH latest_prediction_run AS (
+    WITH current_snapshot AS (
       SELECT id
-      FROM prediction_runs
-      ORDER BY created_at DESC, id DESC
+      FROM ingestion_runs
+      ORDER BY generated_at DESC, id DESC
       LIMIT 1
-    ),
-    current_gameweek AS (
-      SELECT COALESCE(
-        (SELECT id FROM gameweeks WHERE is_current = true ORDER BY id DESC LIMIT 1),
-        (SELECT id FROM gameweeks WHERE is_next = true ORDER BY id ASC LIMIT 1),
-        (SELECT id FROM gameweeks WHERE finished = false ORDER BY id ASC LIMIT 1),
-        (SELECT max(id) FROM gameweeks)
-      ) AS id
-    ),
-    latest_prediction_players AS (
-      SELECT DISTINCT pp.player_id
-      FROM player_predictions pp
-      JOIN latest_prediction_run lpr ON lpr.id = pp.prediction_run_id
     )
     SELECT
       p.id,
+      p.code,
       p.display_name,
       p.team_id,
       t.short_name AS team_short,
@@ -79,21 +69,56 @@ export async function readSquadBuilderPlayers(client: Queryable): Promise<Enrich
               ELSE f.team_a_difficulty
             END AS difficulty
           FROM fixtures f
-          CROSS JOIN current_gameweek cg
+          JOIN gameweeks g ON g.id = f.event_id AND g.ingestion_run_id = f.ingestion_run_id
           WHERE
             (f.team_h_id = p.team_id OR f.team_a_id = p.team_id)
-            AND (cg.id IS NULL OR f.event_id >= cg.id)
+            AND f.ingestion_run_id = p.ingestion_run_id
+            AND NOT f.started AND NOT f.finished AND g.deadline_time > now()
           ORDER BY f.event_id ASC NULLS LAST, f.kickoff_time ASC NULLS LAST, f.id ASC
           LIMIT 3
         ) upcoming
       ), 0)::float8 AS next_3_ease
-    FROM latest_prediction_players lpp
-    JOIN players p ON p.id = lpp.player_id
+    FROM current_snapshot s
+    JOIN players p ON p.ingestion_run_id = s.id
     JOIN teams t ON t.id = p.team_id
+    WHERE ($1::bigint IS NULL OR s.id = $1)
     ORDER BY p.display_name ASC, p.id ASC
-  `);
+  `, [snapshotId ?? null]);
 
   return result.rows.map(toEnrichedPlayer);
+}
+
+export async function readBlankGameweekCandidates(
+  client: Queryable, snapshotId: number, gameweekId: number, runId: number
+): Promise<PlayerCandidate[]> {
+  const { rows } = await client.query<{
+    id: number; display_name: string; team_id: number; short_name: string; name: string;
+    position: Pos; price: number;
+  }>(`
+    SELECT p.id, p.display_name, p.team_id, t.short_name, t.name, p.position, p.now_cost::float8 AS price
+    FROM players p
+    JOIN teams t ON t.id = p.team_id AND t.ingestion_run_id = p.ingestion_run_id
+    WHERE p.ingestion_run_id = $1 AND NOT EXISTS (
+      SELECT 1 FROM fixtures f WHERE f.ingestion_run_id = $1 AND f.event_id = $2
+        AND (p.team_id = f.team_h_id OR p.team_id = f.team_a_id)
+    )
+  `, [snapshotId, gameweekId]);
+
+  return rows.map(row => ({
+    playerId: row.id,
+    playerName: row.display_name,
+    teamId: row.team_id,
+    teamName: row.name,
+    teamShortName: row.short_name,
+    position: row.position,
+    price: row.price,
+    predictedPoints: 0,
+    fixtureId: null,
+    fixtureCount: 0,
+    availability: 'unavailable',
+    predictionRunId: runId,
+    targetGameweekId: gameweekId
+  }));
 }
 
 export function searchEnrichedPlayers(
@@ -121,6 +146,7 @@ export function searchEnrichedPlayers(
 function toEnrichedPlayer(row: PlayerCandidateDbRow): EnrichedPlayer {
   return {
     id: Number(row.id),
+    code: row.code ?? null,
     name: row.display_name,
     teamId: Number(row.team_id),
     teamShort: row.team_short,
@@ -161,9 +187,7 @@ function scorePlayerSearch(query: string, playerName: string): number {
     playerWords.some(playerWord => playerWord.startsWith(queryWord) || playerWord.includes(queryWord))
   );
 
-  return matchedWords.length > 0
-    ? (matchedWords.length / queryWords.length) * 60
-    : 0;
+  return matchedWords.length === queryWords.length ? 60 : 0;
 }
 
 function toNumber(value: number | string): number {

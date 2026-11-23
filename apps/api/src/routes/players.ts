@@ -1,6 +1,6 @@
 import { Router, Response, type Router as ExpressRouter } from 'express';
 import { z } from 'zod';
-import { createDbPool, Queryable } from '../db/client';
+import { getServerPool, Queryable } from '../db/client';
 import {
   PLAYER_CANDIDATE_REQUIRED_COMMANDS,
   readSquadBuilderPlayers,
@@ -9,13 +9,13 @@ import {
 
 // Validation schemas
 const searchSchema = z.object({
-  name: z.string().min(1).max(100)
+  name: z.string().trim().min(1).max(100)
 });
 
 const positionSchema = z.enum(['GK', 'DEF', 'MID', 'FWD']);
 const playerIdSchema = z.coerce.number().int().positive();
 
-export function createPlayersRouter(client: Queryable = createDbPool()): ExpressRouter {
+export function createPlayersRouter(client: Queryable = getServerPool()): ExpressRouter {
   const router: ExpressRouter = Router();
 
   // GET /api/players - Get prediction-backed local players
@@ -53,7 +53,7 @@ export function createPlayersRouter(client: Queryable = createDbPool()): Express
         return res.status(400).json({
           success: false,
           error: 'Invalid search parameters',
-          details: error.errors
+          details: error.issues
         });
       }
 
@@ -80,7 +80,7 @@ export function createPlayersRouter(client: Queryable = createDbPool()): Express
         return res.status(400).json({
           success: false,
           error: 'Invalid position. Must be GK, DEF, MID, or FWD',
-          details: error.errors
+          details: error.issues
         });
       }
 
@@ -113,7 +113,7 @@ export function createPlayersRouter(client: Queryable = createDbPool()): Express
         return res.status(400).json({
           success: false,
           error: 'Invalid player ID',
-          details: error.errors
+          details: error.issues
         });
       }
 
@@ -127,7 +127,7 @@ export function createPlayersRouter(client: Queryable = createDbPool()): Express
 function sendMissingPlayerData(res: Response): void {
   res.status(503).json({
     success: false,
-    error: 'No prediction-backed player candidates are loaded. Run the local data pipeline and load predictions into PostgreSQL.',
+    error: 'The current FPL player list is unavailable.',
     data: [],
     count: 0,
     requiredCommands: PLAYER_CANDIDATE_REQUIRED_COMMANDS
@@ -137,7 +137,7 @@ function sendMissingPlayerData(res: Response): void {
 function sendPlayerDataError(res: Response): void {
   res.status(503).json({
     success: false,
-    error: 'Could not load local player data. Start PostgreSQL and run the documented data pipeline.',
+    error: 'Could not load FPL players. Try again shortly.',
     data: [],
     count: 0,
     requiredCommands: PLAYER_CANDIDATE_REQUIRED_COMMANDS

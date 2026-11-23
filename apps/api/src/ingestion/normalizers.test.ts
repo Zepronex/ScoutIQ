@@ -94,7 +94,7 @@ function bootstrapFixture() {
         code: 1,
         name: 'Arsenal',
         short_name: 'ARS',
-        strength: 5,
+        strength: null,
         strength_overall_home: 1350,
         strength_overall_away: 1320
       }
@@ -159,6 +159,7 @@ describe('FPL ingestion normalization', () => {
     assert.equal(normalized.players[0].nowCost, 12.5);
     assert.equal(normalized.players[0].selectedByPercent, 42.5);
     assert.equal(normalized.teams[0].shortName, 'ARS');
+    assert.equal(normalized.teams[0].strength, null);
     assert.equal(normalized.events[0].deadlineTime, '2026-08-14T17:30:00.000Z');
   });
 

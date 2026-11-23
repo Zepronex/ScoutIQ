@@ -27,7 +27,7 @@ export function readDatabaseConfig(
   }
 
   return {
-    connectionString: env.DATABASE_URL ?? buildConnectionString(env),
+    connectionString: validateConnectionString(env.DATABASE_URL?.trim() || buildConnectionString(env)),
     ssl: parseBoolean(env.DATABASE_SSL),
     workspaceRoot,
     migrationsDir: path.join(workspaceRoot, 'db', 'migrations'),
@@ -58,6 +58,16 @@ export function readDatabaseConfig(
       'expected_points_backtest.json'
     )
   };
+}
+
+function validateConnectionString(value: string): string {
+  try {
+    const parsed = new URL(value);
+    if (['postgresql:', 'postgres:'].includes(parsed.protocol) && parsed.hostname && parsed.pathname.length > 1) return value;
+  } catch {
+    // Keep credentials and connection details out of diagnostics.
+  }
+  throw new Error('Use a PostgreSQL DATABASE_URL with a hostname and database name.');
 }
 
 export function findWorkspaceRoot(startDir: string): string {

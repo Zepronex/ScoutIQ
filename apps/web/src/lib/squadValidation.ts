@@ -48,11 +48,11 @@ export function validateSquadForAnalysis(squad: Squad): SquadValidationResult {
     errors.push('Starting XI must use a valid formation: 3-5 defenders, 2-5 midfielders, 1-3 forwards.');
   }
 
-  if (roundMoney(calculateSquadCost(allPlayers)) > BUDGET_LIMIT) {
-    errors.push('Squad exceeds the 100.0m budget.');
+  if (squad.mode !== 'existing' && roundMoney(calculateSquadCost(allPlayers)) > BUDGET_LIMIT) {
+    errors.push('Squad exceeds the £100.0m draft budget.');
   }
 
-  if (hasTeamIds(allPlayers) && hasTeamLimitViolation(allPlayers)) {
+  if (squad.mode !== 'existing' && hasTeamLimitViolation(allPlayers)) {
     errors.push('A squad can include at most 3 players from the same club.');
   }
 
@@ -86,10 +86,6 @@ function findDuplicatePlayerIds(players: readonly SquadSlot[]): number[] {
 
 function calculateSquadCost(players: readonly SquadSlot[]): number {
   return players.reduce((sum, player) => sum + player.price, 0);
-}
-
-function hasTeamIds(players: readonly SquadSlot[]): boolean {
-  return players.every(player => typeof player.teamId === 'number');
 }
 
 function hasTeamLimitViolation(players: readonly SquadSlot[]): boolean {

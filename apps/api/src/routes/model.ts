@@ -1,8 +1,8 @@
 import { Router, Response, type Router as ExpressRouter } from 'express';
-import { createDbPool, Queryable } from '../db/client';
+import { getServerPool, Queryable } from '../db/client';
 import { readLatestModelEvaluation } from '../db/predictionQueries';
 
-export function createModelRouter(client: Queryable = createDbPool()): ExpressRouter {
+export function createModelRouter(client: Queryable = getServerPool()): ExpressRouter {
   const router: ExpressRouter = Router();
 
   router.get('/evaluations/latest', async (_req, res) => {

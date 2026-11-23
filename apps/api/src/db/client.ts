@@ -8,13 +8,26 @@ export type Queryable = {
   ): Promise<QueryResult<T>>;
 };
 
-export function createDbPool(config: DatabaseConfig = readDatabaseConfig()): Pool {
+export function createDbPool(config: DatabaseConfig = readDatabaseConfig(), overrides?: PoolConfig): Pool {
   const poolConfig: PoolConfig = {
     connectionString: config.connectionString,
-    ssl: config.ssl ? { rejectUnauthorized: false } : undefined
+    ssl: config.ssl ? { rejectUnauthorized: true } : undefined,
+    ...overrides
   };
 
   return new Pool(poolConfig);
+}
+
+let serverPool: Pool | undefined;
+
+export function getServerPool(): Pool {
+  if (!serverPool) {
+    serverPool = createDbPool(undefined, { connectionTimeoutMillis: 3000, statement_timeout: 5000 });
+    serverPool.on('error', error => {
+      console.error('PostgreSQL idle connection failed', 'code' in error ? error.code : 'unknown');
+    });
+  }
+  return serverPool;
 }
 
 export async function withTransaction<T>(

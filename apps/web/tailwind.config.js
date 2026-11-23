@@ -8,9 +8,9 @@ export default {
     extend: {
       colors: {
         fpl: {
-          green: '#00ff85',
-          'green-dark': '#00cc6a',
-          'green-light': '#33ff99',
+          green: '#247356',
+          'green-dark': '#185641',
+          'green-light': '#32946e',
           dark: '#111827',
           'dark-light': '#1f2937',
           gold: '#ffd700',

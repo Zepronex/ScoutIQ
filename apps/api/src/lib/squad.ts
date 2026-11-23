@@ -55,7 +55,6 @@ export class SquadAnalyzer {
       const score = ScoringService.calculatePlayerScore(player, weights);
       const label = ScoringService.getPlayerLabel(score, player);
       
-      // Get suggestions for all players (within +/- 1.5 score range)
       const suggestions = await this.getSuggestions(player, slot, squad, allPlayers, weights);
       
       results.push({
@@ -85,7 +84,7 @@ export class SquadAnalyzer {
       });
     }
     
-    const averageScore = results.length > 0 ? totalScore / results.length : 0;
+    const averageScore = squad.startingXI.length > 0 ? totalScore / squad.startingXI.length : 0;
     
     return {
       results,
@@ -107,10 +106,19 @@ export class SquadAnalyzer {
     const currentScore = ScoringService.calculatePlayerScore(currentPlayer, weights);
     
     // Filter potential replacements
-    const candidates = allPlayers.filter(player => 
+    if (squad.mode === 'existing' && (slot.sellingPrice === undefined || slot.sellingPrice > slot.price)) return suggestions;
+    const clubCounts = new Map<number, number>();
+    for (const player of [...squad.startingXI, ...squad.bench]) {
+      if (player.teamId !== undefined && player.id !== currentPlayer.id) {
+        clubCounts.set(player.teamId, (clubCounts.get(player.teamId) ?? 0) + 1);
+      }
+    }
+    if ([...clubCounts.values()].some(count => count > MAX_PLAYERS_PER_TEAM)) return suggestions;
+    const candidates = allPlayers.filter(player =>
       player.id !== currentPlayer.id && // Not the same player
       player.pos === currentPlayer.pos && // Same position
-      player.price <= slot.price + squad.bank && // Within budget
+      roundMoney(player.price - (slot.sellingPrice ?? slot.price)) <= squad.bank &&
+      (clubCounts.get(player.teamId) ?? 0) < MAX_PLAYERS_PER_TEAM &&
       player.status === 'a' && // Available
       !this.isPlayerInSquad(player.id, squad) // Not already in squad
     );
@@ -121,12 +129,10 @@ export class SquadAnalyzer {
       score: ScoringService.calculatePlayerScore(player, weights)
     }));
     
-    // Filter candidates within +/- 1.5 score range
-    const scoreRange = 1.5;
     const sortedCandidates = scoredCandidates
-      .filter(player => Math.abs(player.score - currentScore) <= scoreRange)
-      .sort((a, b) => Math.abs(b.score - currentScore) - Math.abs(a.score - currentScore))
-      .slice(0, 5); // Top 5 suggestions within range
+      .filter(player => player.score > currentScore)
+      .sort((a, b) => b.score - a.score || a.price - b.price || a.id - b.id)
+      .slice(0, 5);
     
     return sortedCandidates.map(player => ({
       id: player.id,
@@ -176,8 +182,8 @@ export class SquadAnalyzer {
     
     const totalCost = allPlayers.reduce((sum, slot) => sum + slot.price, 0);
     
-    if (roundMoney(totalCost) > BUDGET_LIMIT || squad.bank < 0) {
-      errors.push('Squad exceeds the 100.0m budget.');
+    if (squad.mode !== 'existing' && (roundMoney(totalCost) > BUDGET_LIMIT || squad.bank < 0)) {
+      errors.push('Squad exceeds the £100.0m draft budget.');
     }
     
     const allPlayerIds = allPlayers.map(slot => slot.id);
@@ -187,7 +193,7 @@ export class SquadAnalyzer {
     }
 
     const overTeamLimit = getOverTeamLimit(allPlayers);
-    if (overTeamLimit) {
+    if (overTeamLimit && squad.mode !== 'existing') {
       errors.push('A squad can include at most 3 players from the same club.');
     }
     

@@ -497,7 +497,7 @@ def build_gold_tables(silver_tables: dict[str, list[JsonObject]]) -> dict[str, l
     fixtures = sorted(silver_tables['fixtures'], key=lambda fixture: fixture['fixture_id'])
     teams_by_id = {team['team_id']: team for team in teams}
 
-    next_gameweek_id = select_next_gameweek_id(gameweeks, fixtures)
+    next_gameweek_id = select_next_gameweek_id(gameweeks)
     completed_gameweeks = count_completed_gameweeks_before(gameweeks, next_gameweek_id)
     upcoming_fixtures = [
         fixture
@@ -660,25 +660,16 @@ def build_raw_rows(
     ]
 
 
-def select_next_gameweek_id(gameweeks: list[JsonObject], fixtures: list[JsonObject]) -> int | None:
-    next_gameweeks = [gameweek['gameweek_id'] for gameweek in gameweeks if gameweek['is_next']]
-    if next_gameweeks:
-        return min(next_gameweeks)
-
-    current_gameweeks = [gameweek['gameweek_id'] for gameweek in gameweeks if gameweek['is_current']]
-    current_gameweek_id = max(current_gameweeks) if current_gameweeks else None
-    upcoming_fixture_gameweeks = sorted({
-        fixture['gameweek_id']
-        for fixture in fixtures
-        if fixture['gameweek_id'] is not None and not fixture['started'] and not fixture['finished']
-    })
-
-    if current_gameweek_id is not None:
-        future_gameweeks = [gameweek_id for gameweek_id in upcoming_fixture_gameweeks if gameweek_id > current_gameweek_id]
-        if future_gameweeks:
-            return future_gameweeks[0]
-
-    return upcoming_fixture_gameweeks[0] if upcoming_fixture_gameweeks else None
+def select_next_gameweek_id(gameweeks: list[JsonObject]) -> int | None:
+    open_deadlines = []
+    for gameweek in gameweeks:
+        if gameweek['finished']:
+            continue
+        deadline = datetime.fromisoformat(gameweek['deadline_time'].replace('Z', '+00:00'))
+        captured = datetime.fromisoformat(gameweek['source_generated_at'].replace('Z', '+00:00'))
+        if deadline > captured:
+            open_deadlines.append((deadline, gameweek['gameweek_id']))
+    return min(open_deadlines)[1] if open_deadlines else None
 
 
 def count_completed_gameweeks_before(gameweeks: list[JsonObject], target_gameweek_id: int | None) -> int:

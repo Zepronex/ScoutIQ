@@ -50,6 +50,36 @@ describe('transfer optimizer', () => {
     assert.equal(withOneHit[1].netExpectedPointsGain, 1);
   });
 
+  it('uses selling value and the last £0.1m of bank when a paid transfer beats rolling', () => {
+    const squad = squadFixture();
+    squad.existingSquad = true;
+    squad.bank = 0.7;
+    squad.slots = squad.slots.map(player => ({
+      ...player,
+      predictedPoints: player.playerId === 13 ? 5 : 1,
+      sellingPrice: player.position !== 'FWD' ? player.price : player.playerId === 15 ? 5.8 : 4
+    }));
+    const input = {
+      currentSquad: squad,
+      availablePlayers: [candidate(101, 'Forward Upgrade', 'FWD', 17, 6.5, 8)],
+      freeTransfers: 0,
+      maxHits: 1
+    };
+    const [plan] = recommendTransfers(input);
+    // Before: 10 x 1 + 5 + 5 captain. After: 9 x 1 + 5 + 8 + 8 captain.
+    assert.equal(plan.startingXi.totalPredictedPoints, 30);
+    assert.equal(plan.expectedPointsGain, 10);
+    assert.equal(plan.netExpectedPointsGain, 6);
+    assert.equal(plan.moves[0].playerOut.playerId, 15);
+    assert.equal(plan.budgetImpact, 0.7);
+    assert.equal(plan.bankAfterTransfers, 0);
+    assert.deepEqual(recommendTransfers({ ...input, currentSquad: { ...squad, bank: 0.6 } }), []);
+    assert.deepEqual(recommendTransfers({ ...input, maxHits: 0 }), []);
+    assert.deepEqual(recommendTransfers({
+      ...input, availablePlayers: [candidate(102, 'Lateral Forward', 'FWD', 17, 6.5, 3)]
+    }), []);
+  });
+
   it('skips unaffordable, unavailable, duplicate, and invalid-team-limit candidates', () => {
     const recommendations = recommendTransfers({
       currentSquad: squadFixtureWithThreeTeamOnePlayers(),

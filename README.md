@@ -2,9 +2,15 @@
 
 [![CI](https://github.com/Zepronex/FPL-Optimizer/actions/workflows/ci.yml/badge.svg?branch=dev)](https://github.com/Zepronex/FPL-Optimizer/actions/workflows/ci.yml)
 
-ScoutIQ is an AI and data engineering project for Fantasy Premier League decision support. It combines official FPL data ingestion, PostgreSQL storage, feature engineering, expected-points modelling, deterministic optimization, and controlled recommendation explanations into one local-first demo.
+ScoutIQ is an AI and data engineering project for Fantasy Premier League decision support. It combines official FPL data ingestion, PostgreSQL storage, feature engineering, expected-points modelling, deterministic optimization, and controlled recommendation explanations into an FPL gameweek planner.
 
 The project exists to show how a sports decision platform can be built with reproducible data pipelines and transparent model evaluation instead of opaque recommendations.
+
+## Play ScoutIQ
+
+Open the squad builder to add players, generate a £100.0m draft, or import the most recent public FPL picks. Review the next open deadline, compare all player projections, and check a starting XI and captain. Existing squads use the manager’s entered bank and selling prices to compare up to two transfers and points hits.
+
+The one-service Node build serves the web app and API. Follow the [Deployment Guide](docs/DEPLOYMENT.md) for staging, the scheduled data refresh and an offline fixture rehearsal. The [Production Readiness report](docs/PRODUCTION_READINESS.md) records the playtest and remaining staging checks.
 
 ## What It Solves
 
@@ -105,8 +111,8 @@ What to look for:
 
 - Home page: the React app loads and connects to the API.
 - Squad Builder: manual analysis uses default scoring weights internally; users do not tune scoring sliders in the demo flow.
-- Top Players: prediction-backed rows are served from PostgreSQL, not a legacy side service.
-- Team Analysis: a complete analyzed squad can show deterministic optimizer output for starting XI, bench order, captaincy, transfers, projected points, and constraint status.
+- Player projections: the current FPL snapshot supplies gameweek and deadline context, ranked players and fixture coverage.
+- Gameweek plan: a complete squad shows starting XI, bench order, captaincy and projected points. Compare transfers with the selected allowance, hit limit and finance inputs.
 - Recommendation explanation panel: the agent explains an optimizer result that already exists. In the default local demo, deterministic fallback mode is acceptable and expected when provider credentials are not configured.
 - Model Evaluation: the dashboard shows MAE, RMSE, baseline comparison, data coverage, recent runs, setup warnings, and limitation messaging.
 - API health: the backend can be checked independently from the frontend.
@@ -117,7 +123,7 @@ The evaluation dashboard should be read as a transparency surface. The current e
 
 ## Screenshots
 
-These screenshots come from a local ScoutIQ demo run with generated local data and prediction-serving rows loaded into PostgreSQL.
+These archived screenshots show an earlier local ScoutIQ demo with generated local data and prediction-serving rows loaded into PostgreSQL.
 
 | Home | Top Players |
 | --- | --- |
@@ -264,13 +270,13 @@ pnpm.cmd run db:load:predictions
 
 ## Project Status
 
-- The local demo works without an OpenAI API key through deterministic explanation fallback.
+- ScoutIQ works without provider credentials through deterministic explanations.
 - Live OpenAI or Azure OpenAI mode is optional and explanation-only.
 - Recommendations are deterministic and constraint-based.
 - Prediction-backed optimizer screens require generated and loaded prediction rows in PostgreSQL.
 - Evaluation compares the expected-points model against a historical recent-points baseline.
 - The current model is not claimed to outperform the baseline across tracked metrics.
-- Deployment readiness is documented in [Deployment Guide](docs/DEPLOYMENT.md) and [Production Readiness](docs/PRODUCTION_READINESS.md), but production deployment is not yet complete.
+- Deployment readiness is documented in [Deployment Guide](docs/DEPLOYMENT.md) and [Production Readiness](docs/PRODUCTION_READINESS.md). The production build has been rehearsed locally.
 
 ## Current Limitations
 
@@ -278,12 +284,12 @@ pnpm.cmd run db:load:predictions
 - Public FPL API data limits the available player, team, injury, and tactical context.
 - Optimizer recommendations depend on complete prediction rows and valid constraints.
 - Manual squad analysis uses backend default scoring weights; the demo does not expose user-tuned analysis sliders.
-- Automated generated-team review is unavailable in the current web demo path.
+- Draft generation uses a constrained heuristic. Transfer comparisons cover one gameweek and up to two moves.
 - The LLM explanation agent explains existing optimizer output; it does not choose players, transfers, captaincy, bench order, or chips.
 - Local model and prediction artifacts are generated under gitignored `data/` paths and are not committed.
 - Full public Databricks input packages are generated under gitignored `data/` paths; only a small labeled public-data fixture is committed for tests.
 - Databricks Free Edition is serverless-only, capacity-limited, and not suitable for a production-deployed claim.
-- Production deployment, scheduled ingestion, and production monitoring are not yet documented as complete.
+- Public hosting, managed database TLS, scheduled refresh execution and a live public-entry check remain staging tasks.
 - No secrets, API keys, service account files, local `.env` files, or database dumps should be committed.
 
 ## Documentation

@@ -1,23 +1,27 @@
 import { Router, Response, type Router as ExpressRouter } from 'express';
 import { z } from 'zod';
-import { createDbPool, Queryable } from '../db/client';
+import { getServerPool, Queryable } from '../db/client';
 import {
   readGameweekPredictionSummary,
-  readLatestPredictionSummary
+  readPlanningPredictions,
+  readPlanningWindow
 } from '../db/predictionQueries';
-import { PredictionSummary } from '../types';
+import { readBlankGameweekCandidates } from '../db/playerQueries';
 import { decorateStartingXiScores, decorateTransferScores } from '../optimizer/displayScores';
 import { OptimizerInputError } from '../optimizer/errors';
 import { predictionsToCandidates } from '../optimizer/predictionAdapter';
 import { buildSquadFromCandidates } from '../optimizer/squadBuilder';
 import { optimizeStartingXi } from '../optimizer/startingXi';
 import { recommendTransfers } from '../optimizer/transfers';
+import { calculateSquadCost, roundMoney } from '../optimizer/rules';
 import { PlayerCandidate, Squad, SquadSlot } from '../optimizer/types';
 
 const PositionSchema = z.enum(['GK', 'DEF', 'MID', 'FWD']);
 const AvailabilitySchema = z.enum(['available', 'doubtful', 'unavailable', 'unknown']);
 const PositiveIdSchema = z.coerce.number().int().positive();
-const MoneySchema = z.coerce.number().nonnegative();
+const MoneySchema = z.coerce.number().finite().min(0).max(1000);
+const FplMoneySchema = z.union([z.number(), z.string().regex(/^\d+(\.\d)?$/).transform(Number)])
+  .pipe(z.number().min(0).max(1000).multipleOf(0.1));
 
 const PlayerCandidateSchema = z.object({
   playerId: PositiveIdSchema,
@@ -27,7 +31,7 @@ const PlayerCandidateSchema = z.object({
   teamName: z.string().min(1).optional(),
   teamShortName: z.string().min(1).optional(),
   price: MoneySchema,
-  predictedPoints: z.coerce.number().nonnegative(),
+  predictedPoints: z.coerce.number().finite().nonnegative(),
   predictionRunId: PositiveIdSchema.optional(),
   targetGameweekId: PositiveIdSchema.optional(),
   fixtureId: PositiveIdSchema.nullable().optional(),
@@ -37,8 +41,10 @@ const PlayerCandidateSchema = z.object({
 const SquadInputSchema = z.object({
   slots: z.array(PlayerCandidateSchema).length(15).optional(),
   playerIds: z.array(PositiveIdSchema).length(15).optional(),
-  bank: MoneySchema.default(0),
-  budget: MoneySchema.default(100)
+  bank: FplMoneySchema.optional(),
+  budget: MoneySchema.default(100),
+  existingSquad: z.boolean().optional(),
+  sellingPrices: z.record(z.string().regex(/^[1-9]\d*$/), FplMoneySchema.refine(value => value > 0)).optional()
 }).superRefine((value, context) => {
   if (!value.slots && !value.playerIds) {
     context.addIssue({
@@ -51,20 +57,23 @@ const SquadInputSchema = z.object({
 
 const StartingXiRequestSchema = z.object({
   squad: SquadInputSchema,
-  gameweekId: PositiveIdSchema.optional()
+  gameweekId: PositiveIdSchema.optional(),
+  predictionRunId: PositiveIdSchema.optional()
 });
 
 const TransfersRequestSchema = z.object({
   currentSquad: SquadInputSchema,
-  availablePlayers: z.array(PlayerCandidateSchema).optional(),
+  availablePlayers: z.array(PlayerCandidateSchema).max(1200).optional(),
   gameweekId: PositiveIdSchema.optional(),
-  freeTransfers: z.coerce.number().int().min(0),
-  maxHits: z.coerce.number().int().min(0).optional()
+  predictionRunId: PositiveIdSchema.optional(),
+  freeTransfers: z.coerce.number().int().min(0).max(5),
+  maxHits: z.coerce.number().int().min(0).max(2).optional()
 });
 
 const SquadBuildRequestSchema = z.object({
-  availablePlayers: z.array(PlayerCandidateSchema).optional(),
+  availablePlayers: z.array(PlayerCandidateSchema).max(1200).optional(),
   gameweekId: PositiveIdSchema.optional(),
+  predictionRunId: PositiveIdSchema.optional(),
   budget: MoneySchema.default(100),
   reservedBank: MoneySchema.optional()
 });
@@ -82,14 +91,14 @@ class OptimizerRouteError extends Error {
   }
 }
 
-export function createOptimizerRouter(client: Queryable = createDbPool()): ExpressRouter {
+export function createOptimizerRouter(client: Queryable = getServerPool()): ExpressRouter {
   const router: ExpressRouter = Router();
 
   router.post('/starting-xi', async (req, res) => {
     try {
       const request = StartingXiRequestSchema.parse(req.body);
       const predictionContext = request.squad.playerIds
-        ? await readPredictionContext(client, request.gameweekId)
+        ? await readPredictionContext(client, request.gameweekId, request.predictionRunId)
         : null;
       const squad = resolveSquad(request.squad, predictionContext?.candidates);
       const comparisonPool = predictionContext?.candidates ?? squad.slots;
@@ -113,9 +122,15 @@ export function createOptimizerRouter(client: Queryable = createDbPool()): Expre
       const request = TransfersRequestSchema.parse(req.body);
       const needsPredictionContext = Boolean(request.currentSquad.playerIds || !request.availablePlayers);
       const predictionContext = needsPredictionContext
-        ? await readPredictionContext(client, request.gameweekId)
+        ? await readPredictionContext(client, request.gameweekId, request.predictionRunId)
         : null;
       const currentSquad = resolveSquad(request.currentSquad, predictionContext?.candidates);
+      if (currentSquad.existingSquad && (request.freeTransfers > 0 || (request.maxHits ?? 0) > 0)) {
+        if (request.currentSquad.bank === undefined) throw new OptimizerRouteError(400, 'bank_required');
+        if (currentSquad.slots.some(slot => slot.sellingPrice === undefined)) {
+          throw new OptimizerRouteError(400, 'selling_prices_required');
+        }
+      }
       const availablePlayers = request.availablePlayers ?? predictionContext?.candidates;
       if (!availablePlayers) {
         throw new OptimizerRouteError(400, 'available_players_required');
@@ -150,7 +165,7 @@ export function createOptimizerRouter(client: Queryable = createDbPool()): Expre
       const request = SquadBuildRequestSchema.parse(req.body);
       const predictionContext = request.availablePlayers
         ? null
-        : await readPredictionContext(client, request.gameweekId);
+        : await readPredictionContext(client, request.gameweekId, request.predictionRunId);
       const candidates = request.availablePlayers ?? predictionContext?.candidates;
       if (!candidates) {
         throw new OptimizerRouteError(400, 'available_players_required');
@@ -182,25 +197,32 @@ export function createOptimizerRouter(client: Queryable = createDbPool()): Expre
 
 async function readPredictionContext(
   client: Queryable,
-  gameweekId?: number
-): Promise<{ summary: PredictionSummary; candidates: PlayerCandidate[] }> {
-  const summary = gameweekId
-    ? await readGameweekPredictionSummary(client, gameweekId)
-    : await readLatestPredictionSummary(client);
-
-  if (!summary) {
-    throw new OptimizerRouteError(404, 'no_prediction_runs_loaded');
+  gameweekId?: number,
+  predictionRunId?: number
+): Promise<{ candidates: PlayerCandidate[] }> {
+  if (gameweekId !== undefined && predictionRunId === undefined) {
+    const summary = await readGameweekPredictionSummary(client, gameweekId);
+    if (!summary) throw new OptimizerRouteError(404, 'no_prediction_runs_loaded');
+    return { candidates: predictionsToCandidates(summary.predictions) };
   }
 
-  return {
-    summary,
-    candidates: predictionsToCandidates(summary.predictions)
-  };
+  const window = await readPlanningWindow(client);
+  if (!window || window.gameweek.runId === null) {
+    throw new OptimizerRouteError(503, 'no_planning_predictions');
+  }
+  if (predictionRunId !== undefined && window.gameweek.runId !== predictionRunId) {
+    throw new OptimizerRouteError(409, 'planning_gameweek_changed');
+  }
+  const predictions = await readPlanningPredictions(client, window);
+  if (predictions.length === 0) throw new OptimizerRouteError(503, 'no_planning_predictions');
+  const candidates = predictionsToCandidates(predictions);
+  const blankPlayers = await readBlankGameweekCandidates(client, window.snapshotId, window.gameweek.id, window.gameweek.runId);
+  return { candidates: uniquePlayersById([...candidates, ...blankPlayers]) };
 }
 
 function resolveSquad(input: SquadInput, predictionCandidates?: readonly PlayerCandidate[]): Squad {
   if (input.slots) {
-    return toSquad(input.slots, input.budget, input.bank);
+    return toSquad(input.slots, input);
   }
 
   if (!input.playerIds) {
@@ -219,19 +241,24 @@ function resolveSquad(input: SquadInput, predictionCandidates?: readonly PlayerC
 
   return toSquad(
     input.playerIds.map(playerId => candidateById.get(playerId)).filter(isPlayerCandidate),
-    input.budget,
-    input.bank
+    input
   );
 }
 
-function toSquad(players: readonly PlayerCandidate[], budget: number, bank: number): Squad {
+function toSquad(players: readonly PlayerCandidate[], input: SquadInput): Squad {
+  const bank = input.bank ?? 0;
+  const slots = players.map((player, slotIndex) => {
+    const sellingPrice = input.existingSquad ? input.sellingPrices?.[player.playerId] : undefined;
+    if (sellingPrice !== undefined && sellingPrice > player.price) {
+      throw new OptimizerRouteError(400, 'invalid_selling_price', { playerId: player.playerId });
+    }
+    return { ...player, slotIndex, sellingPrice };
+  });
   return {
-    budget,
+    budget: input.existingSquad ? roundMoney(calculateSquadCost(slots) + bank) : input.budget,
     bank,
-    slots: players.map((player, index) => ({
-      ...player,
-      slotIndex: index
-    }))
+    slots,
+    existingSquad: input.existingSquad
   };
 }
 
@@ -267,7 +294,7 @@ function handleOptimizerRouteError(res: Response, error: unknown): void {
     res.status(400).json({
       success: false,
       error: 'invalid_optimizer_request',
-      details: error.errors
+      details: error.issues
     });
     return;
   }
@@ -287,6 +314,11 @@ function handleOptimizerRouteError(res: Response, error: unknown): void {
       error: error.code,
       details: error.details
     });
+    return;
+  }
+
+  if (error instanceof Error && ['invalid_squad_budget', 'squad_generation_failed'].includes(error.message)) {
+    res.status(422).json({ success: false, error: error.message });
     return;
   }
 

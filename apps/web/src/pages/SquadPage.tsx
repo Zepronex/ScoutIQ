@@ -1,156 +1,143 @@
-import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { ArrowRight, Sparkles } from 'lucide-react';
+import { apiClient, apiErrorMessage } from '../lib/api';
+import { EnrichedPlayer } from '../lib/types';
+import { validateSquadForAnalysis } from '../lib/squadValidation';
+import ErrorMessage from '../components/ErrorMessage';
+import LoadingSpinner from '../components/LoadingSpinner';
+import EntryImport from '../components/EntryImport';
+import GameweekStatus from '../components/GameweekStatus';
 import SquadForm from '../components/SquadForm';
-import { apiClient } from '../lib/api';
-import { ApiResponse, SquadAnalysis } from '../lib/types';
+import { matchesSavedPlayer, SquadState, toSquadSlot } from '../state/useSquad';
+import { PlanningState } from '../state/usePlanning';
 
-interface SquadPageProps {
-  squadState: ReturnType<typeof import('../state/useSquad').useSquad>;
-}
+export default function SquadPage({ squadState, planning }: { squadState: SquadState; planning: PlanningState }) {
+  const { squad, dispatch } = squadState;
+  const [catalog, setCatalog] = useState<EnrichedPlayer[]>([]);
+  const [catalogError, setCatalogError] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [refresh, setRefresh] = useState(0);
+  const [generating, setGenerating] = useState(false);
+  const [generationError, setGenerationError] = useState('');
+  const generation = useRef<AbortController>();
+  const runId = planning.data?.gameweek?.runId;
+  const sourceUpdatedAt = planning.data?.gameweek?.sourceUpdatedAt;
+  const catalogRevision = useRef(sourceUpdatedAt);
 
-const SquadPage = ({ squadState }: SquadPageProps) => {
-  const navigate = useNavigate();
-  const { squad, error: squadError, clearError: clearSquadError } = squadState;
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [analysisError, setAnalysisError] = useState<string | null>(null);
-  const [analysisCommands, setAnalysisCommands] = useState<string[]>([]);
+  useEffect(() => {
+    if (!sourceUpdatedAt) return;
+    if (catalogRevision.current && catalogRevision.current !== sourceUpdatedAt) setRefresh(value => value + 1);
+    catalogRevision.current = sourceUpdatedAt;
+  }, [sourceUpdatedAt]);
 
-  const handleAnalyze = async () => {
-    if (squad.startingXI.length !== 11 || squad.bench.length !== 4) {
-      setAnalysisError('Please complete your squad (11 starting XI + 4 bench players)');
-      return;
-    }
+  useEffect(() => {
+    const controller = new AbortController();
+    setLoading(true);
+    setCatalogError('');
+    void apiClient.getPlayers(controller.signal).then(response => {
+      if (controller.signal.aborted) return;
+      if (!response.data?.length || !response.success) throw new Error('No players returned');
+      setCatalog(response.data);
+      dispatch({ type: 'catalog', players: new Map(response.data.map(player => [player.id, player])) });
+    }).catch(error => {
+      if (!controller.signal.aborted) setCatalogError(apiErrorMessage(error, 'Could not load the FPL player list.'));
+    }).finally(() => {
+      if (!controller.signal.aborted) setLoading(false);
+    });
+    return () => controller.abort();
+  }, [dispatch, refresh]);
 
-    setIsAnalyzing(true);
-    setAnalysisError(null);
-    setAnalysisCommands([]);
+  useEffect(() => {
+    setGenerating(false);
+    return () => generation.current?.abort();
+  }, [runId]);
 
+  const byId = useMemo(() => new Map(catalog.map(player => [player.id, player])), [catalog]);
+  const players = [...squad.startingXI, ...squad.bench];
+  const missing = catalog.length ? players.filter(slot => {
+    const current = byId.get(slot.id);
+    return !current || !matchesSavedPlayer(slot, current);
+  }) : [];
+  const validation = validateSquadForAnalysis(squad);
+  const canAnalyze = validation.valid && !missing.length && !loading && !catalogError;
+  const owned = squad.mode === 'existing';
+
+  const generate = async () => {
+    if (generation.current || !runId) return;
+    const controller = new AbortController();
+    generation.current = controller;
+    setGenerationError('');
+    setGenerating(true);
     try {
-      const response = await apiClient.analyzeSquad(squad);
-
-      if (!response.success || !response.data) {
-        setAnalysisError(formatAnalysisError(response));
-        setAnalysisCommands(response.requiredCommands || []);
-        return;
+      const response = await apiClient.getSquadRecommendation({ budget: 100, predictionRunId: runId }, controller.signal);
+      if (controller.signal.aborted || !response.data) return;
+      const startingXI = response.data.startingXi.starters.map(slot => byId.get(slot.playerId)).filter((player): player is EnrichedPlayer => Boolean(player));
+      const bench = response.data.startingXi.bench.map(slot => byId.get(slot.playerId)).filter((player): player is EnrichedPlayer => Boolean(player));
+      if (startingXI.length !== 11 || bench.length !== 4) throw new Error('Catalog changed');
+      dispatch({ type: 'replace', squad: {
+        startingXI: startingXI.map(toSquadSlot), bench: bench.map(toSquadSlot), bank: response.data.squad.bank, mode: 'draft'
+      } });
+    } catch (error) {
+      if (!controller.signal.aborted) {
+        const message = apiErrorMessage(error, 'Could not generate a draft. Try again or add players manually.');
+        setGenerationError(message === 'planning_gameweek_changed' ? 'The gameweek data changed. Refresh the projections and try again.'
+          : message === 'squad_generation_failed' ? 'A full draft could not be generated from the available projections. Add players manually.' : message);
       }
-      
-      // Store results and original squad in session storage for the analyze page
-      sessionStorage.setItem('fpl-analysis-results', JSON.stringify(response));
-      sessionStorage.setItem('fpl-original-squad', JSON.stringify(squad));
-      
-      // Navigate to analyze page
-      navigate('/analyze');
-    } catch {
-      setAnalysisError('Could not analyze the squad. Confirm that the local API is running and prediction data is loaded.');
-      setAnalysisCommands([]);
     } finally {
-      setIsAnalyzing(false);
+      if (generation.current === controller) {
+        generation.current = undefined;
+        if (!controller.signal.aborted) setGenerating(false);
+      }
     }
   };
 
-
   return (
-    <div className="space-y-6 sm:space-y-8">
-      {/* Page Header with Analyze Button */}
-      <div className="text-center">
-        <h1 className="text-2xl sm:text-4xl font-bold text-fpl-dark mb-3 sm:mb-4">
-          Squad Builder
-        </h1>
-        <p className="text-sm sm:text-lg text-gray-600 max-w-3xl mx-auto mb-4 sm:mb-6 px-4">
-          Build your Fantasy Premier League squad and review model-backed analysis with deterministic suggestions.
-        </p>
-        
-        {/* Analyze Button - Moved to top */}
-        <div className="flex flex-col items-center space-y-3 px-4">
-          <button
-            onClick={handleAnalyze}
-            disabled={isAnalyzing || squad.startingXI.length !== 11 || squad.bench.length !== 4}
-            className="btn-primary text-lg sm:text-xl px-6 sm:px-10 py-3 sm:py-4 disabled:opacity-50 disabled:cursor-not-allowed font-semibold shadow-lg hover:shadow-xl transition-all duration-200 w-full sm:w-auto"
-          >
-            {isAnalyzing ? (
-              <>
-                <svg className="animate-spin -ml-1 mr-3 h-6 w-6 text-white inline" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                </svg>
-                Analyzing Squad...
-              </>
-            ) : (
-              'Analyze My Squad'
-            )}
-          </button>
-          
-          {/* Progress indicators */}
-          <div className="flex flex-col items-center space-y-1">
-            {squad.startingXI.length !== 11 && (
-              <p className="text-sm text-orange-600 font-medium">
-                Complete your starting XI ({squad.startingXI.length}/11 players)
-              </p>
-            )}
-            
-            {squad.bench.length !== 4 && squad.startingXI.length === 11 && (
-              <p className="text-sm text-orange-600 font-medium">
-                Complete your bench ({squad.bench.length}/4 players)
-              </p>
-            )}
-            
-            {squad.startingXI.length === 11 && squad.bench.length === 4 && (
-              <p className="text-sm text-green-600 font-medium">
-                Squad complete! Ready to analyze
-              </p>
-            )}
-          </div>
+    <div className="space-y-5">
+      <header className="flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <h1 className="page-title">Squad builder</h1>
+          <p className="mt-2 text-slate-600">Choose 15 players to review your lineup and transfer options.</p>
         </div>
-      </div>
-
-      {/* Error Display */}
-      {(squadError || analysisError) && (
-        <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-          <div className="flex justify-between items-start">
+        {canAnalyze ? <Link className="btn-primary" to="/analyze">Review gameweek plan <ArrowRight className="h-4 w-4" aria-hidden="true" /></Link>
+          : <button type="button" className="btn-primary" disabled>Review gameweek plan</button>}
+      </header>
+      <GameweekStatus planning={planning} />
+      <fieldset disabled={generating} className="min-w-0 space-y-5">
+        <section className="card flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <label htmlFor="squad-type" className="block text-sm font-semibold">Squad type</label>
+            <select id="squad-type" className="input-field mt-1" value={owned ? 'existing' : 'draft'}
+              onChange={event => dispatch({ type: 'mode', mode: event.target.value === 'existing' ? 'existing' : 'draft' })}>
+              <option value="draft">New draft · £100.0m</option>
+              <option value="existing">My existing FPL squad</option>
+            </select>
+          </div>
+          {!players.length && !owned && (
             <div>
-              <h3 className="text-red-800 font-medium">Error</h3>
-              <p className="text-red-700 mt-1">
-                {squadError || analysisError}
-              </p>
-              {analysisCommands.length > 0 && analysisError && (
-                <div className="mt-3">
-                  <p className="text-sm font-medium text-red-800">Run the local data pipeline:</p>
-                  <pre className="mt-2 overflow-x-auto rounded-md bg-white p-3 text-xs text-gray-800">
-                    {analysisCommands.join('\n')}
-                  </pre>
-                </div>
-              )}
+              <button type="button" className="btn-secondary" disabled={!runId || loading || !!catalogError} onClick={generate}>
+                <Sparkles className="h-4 w-4" aria-hidden="true" /> {generating ? 'Generating draft…' : 'Generate a draft'}
+              </button>
+              {!runId && !planning.loading && <p className="mt-2 text-sm text-slate-600">Draft generation needs gameweek projections.</p>}
             </div>
-            <button
-              onClick={() => {
-                clearSquadError();
-                setAnalysisError(null);
-                setAnalysisCommands([]);
-              }}
-              className="text-red-600 hover:text-red-800"
-            >
-              x
-            </button>
-          </div>
-        </div>
+          )}
+        </section>
+        {planning.data?.source === 'fpl' && (
+          <EntryImport key={sourceUpdatedAt} replacing={players.length > 0}
+            onImport={imported => dispatch({ type: 'replace', squad: imported })} />
+        )}
+        {squadState.error && <ErrorMessage message={squadState.error} onDismiss={squadState.clearError} />}
+        {generationError && <ErrorMessage message={generationError} action={{ label: 'Refresh projections', onClick: planning.reload }} />}
+        {missing.length > 0 && <ErrorMessage type="warning" title="Saved players need replacing"
+          message={`${missing.map(slot => slot.name ?? slot.id).join(', ')} no longer match the current FPL player list.`} />}
+        {catalogError && <ErrorMessage title="Player list unavailable" message={catalogError} action={{ label: 'Retry player list', onClick: () => setRefresh(value => value + 1) }} />}
+        {loading && <LoadingSpinner text="Loading FPL players…" />}
+        <SquadForm squadState={squadState} players={catalogError || loading ? [] : catalog} />
+      </fieldset>
+      {!canAnalyze && players.length > 0 && (
+        <p className="text-sm text-slate-700" aria-live="polite">{validation.errors.join(' ')}</p>
       )}
-
-      {/* Main Content */}
-      <div>
-        <SquadForm squadState={squadState} />
-      </div>
+      {canAnalyze && <Link className="btn-primary w-full sm:hidden" to="/analyze">Review gameweek plan</Link>}
     </div>
   );
-};
-
-function formatAnalysisError(response: ApiResponse<SquadAnalysis>): string {
-  if (response.error) return response.error;
-
-  if (Array.isArray(response.details) && response.details.every(item => typeof item === 'string')) {
-    return response.details.join(' ');
-  }
-
-  return 'Could not analyze the squad. Check the squad and local prediction data before trying again.';
 }
-
-export default SquadPage;

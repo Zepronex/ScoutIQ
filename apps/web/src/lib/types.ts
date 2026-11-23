@@ -4,6 +4,7 @@ export type Pos = 'GK' | 'DEF' | 'MID' | 'FWD';
 
 export type EnrichedPlayer = {
   id: number;
+  code?: number | null;
   name: string;
   teamId: number;
   teamShort: string;
@@ -24,17 +25,21 @@ export type EnrichedPlayer = {
 
 export type SquadSlot = {
   id: number;
+  code?: number | null;
   pos: Pos;
   price: number;
   name?: string;
   teamShort?: string;
   teamId?: number;
+  sellingPrice?: number;
 };
 
 export type Squad = {
   startingXI: SquadSlot[];
   bench: SquadSlot[];
   bank: number;
+  mode?: 'draft' | 'existing';
+  bankConfirmed?: boolean;
 };
 
 export type Suggestion = {
@@ -121,12 +126,14 @@ export type PlayerPrediction = {
   predictionRunId?: number;
   targetGameweekId?: number;
   fixtureId?: number | null;
+  fixtureCount?: number;
   availability?: PlayerAvailability;
   displayScore?: OptimizerDisplayScore;
 };
 
 export type OptimizerSquadSlot = PlayerPrediction & {
   slotIndex: number;
+  sellingPrice?: number;
 };
 
 export type OptimizerSquad = {
@@ -140,6 +147,8 @@ export type OptimizerSquadInput = {
   playerIds?: number[];
   bank?: number;
   budget?: number;
+  existingSquad?: boolean;
+  sellingPrices?: Record<number, number>;
 };
 
 export type ConstraintValue = number | string | Record<string, number>;
@@ -415,6 +424,21 @@ export type PredictionSummary = {
   count: number;
 };
 
+export type PlanningGameweek = {
+  id: number;
+  season: string | null;
+  deadline: string;
+  sourceUpdatedAt: string;
+  runId: number | null;
+};
+
+export type PlanningData = {
+  source: 'fpl' | 'sample';
+  gameweek: PlanningGameweek | null;
+  missingPlayerCount?: number;
+  players: PlayerPrediction[];
+};
+
 export type OptimizerResult = {
   squad: OptimizerSquad;
   startingXi: StartingXIRecommendation;
@@ -425,12 +449,14 @@ export type OptimizerResult = {
 export type StartingXIRecommendationRequest = {
   squad: OptimizerSquadInput;
   gameweekId?: number;
+  predictionRunId?: number;
 };
 
 export type TransferRecommendationRequest = {
   currentSquad: OptimizerSquadInput;
   availablePlayers?: PlayerPrediction[];
   gameweekId?: number;
+  predictionRunId?: number;
   freeTransfers: number;
   maxHits?: number;
 };
@@ -438,6 +464,7 @@ export type TransferRecommendationRequest = {
 export type SquadOptimizationRequest = {
   availablePlayers?: PlayerPrediction[];
   gameweekId?: number;
+  predictionRunId?: number;
   budget?: number;
   reservedBank?: number;
 };

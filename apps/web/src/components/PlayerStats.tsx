@@ -79,13 +79,13 @@ const PlayerStats = ({ player }: PlayerStatsProps) => {
           <div className="flex justify-between">
             <span className="text-gray-600 flex items-center">
               <Clock className="w-4 h-4 mr-1" />
-              Expected Minutes:
+              Season minutes per start:
             </span>
             <span className="font-medium">{player.expMin.toFixed(1)}</span>
           </div>
           <div className="flex justify-between">
-            <span className="text-gray-600">Next 3 Ease:</span>
-            <span className="font-medium">{player.next3Ease.toFixed(1)}</span>
+            <span className="text-gray-600">Next 3 fixture difficulty:</span>
+            <span className="font-medium">{player.next3Ease > 0 ? player.next3Ease.toFixed(1) : 'Unavailable'}</span>
           </div>
         </div>
       </div>

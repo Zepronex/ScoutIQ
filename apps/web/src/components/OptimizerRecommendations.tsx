@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   AlertTriangle,
   ArrowRight,
@@ -17,159 +17,91 @@ import {
   StartingXIRecommendation,
   TransferRecommendation
 } from '../lib/types';
-import { formatDelta, formatPrice, formatScore, getPositionColor } from '../lib/format';
+import { formatPoints, formatPrice, getPositionColor, predictionAvailability } from '../lib/format';
 import LoadingSpinner from './LoadingSpinner';
-import { apiClient } from '../lib/api';
+import { apiClient, apiErrorMessage } from '../lib/api';
 
 type OptimizerRecommendationsProps = {
-  startingXi?: StartingXIRecommendation | null;
+  startingXi?: StartingXIRecommendation;
   transferRecommendations?: TransferRecommendation[];
+  transferControls?: ReactNode;
   isLoading?: boolean;
   error?: string | null;
-  emptyMessage?: string;
-  contextNote?: string;
+  emptyMessage: string;
   onRetry?: () => void;
   targetGameweekId?: number;
   predictionRunIds?: number[];
 };
 
-const DEFAULT_EMPTY_MESSAGE = 'No optimizer recommendation is available for this squad yet.';
-const EMPTY_TRANSFER_RECOMMENDATIONS: TransferRecommendation[] = [];
-
 const OptimizerRecommendations = ({
   startingXi,
-  transferRecommendations = EMPTY_TRANSFER_RECOMMENDATIONS,
-  isLoading = false,
+  transferRecommendations,
+  transferControls,
+  isLoading,
   error,
-  emptyMessage = DEFAULT_EMPTY_MESSAGE,
-  contextNote,
+  emptyMessage,
   onRetry,
   targetGameweekId,
-  predictionRunIds = []
+  predictionRunIds
 }: OptimizerRecommendationsProps) => {
   const [explanation, setExplanation] = useState<RecommendationExplanation | null>(null);
-  const [isExplanationLoading, setIsExplanationLoading] = useState(false);
   const [explanationError, setExplanationError] = useState<string | null>(null);
-  const [explanationRefreshKey, setExplanationRefreshKey] = useState(0);
-
+  const [explaining, setExplaining] = useState(false);
+  const request = useRef<AbortController>();
   useEffect(() => {
-    if (!startingXi) {
-      setExplanation(null);
-      setExplanationError(null);
-      setIsExplanationLoading(false);
-      return;
-    }
-
-    let cancelled = false;
-
-    const loadExplanation = async () => {
-      setIsExplanationLoading(true);
-      setExplanationError(null);
-
-      try {
-        const response = await apiClient.explainRecommendation({
-          optimizerResult: {
-            startingXi,
-            transferRecommendations,
-            targetGameweekId,
-            predictionRunIds
-          }
-        });
-
-        if (!response.success || !response.data) {
-          throw response;
-        }
-
-        if (!cancelled) {
-          setExplanation(response.data);
-        }
-      } catch {
-        if (!cancelled) {
-          setExplanation(null);
-          setExplanationError('Could not load the recommendation explanation. Optimizer recommendations remain unchanged.');
-        }
-      } finally {
-        if (!cancelled) {
-          setIsExplanationLoading(false);
-        }
-      }
-    };
-
-    loadExplanation();
-
+    setExplanation(null);
+    setExplanationError(null);
+    setExplaining(false);
     return () => {
-      cancelled = true;
+      request.current?.abort();
+      request.current = undefined;
     };
-  }, [startingXi, transferRecommendations, targetGameweekId, predictionRunIds, explanationRefreshKey]);
+  }, [startingXi, transferRecommendations, targetGameweekId, predictionRunIds]);
 
-  if (isLoading) {
-    return (
-      <section className="rounded-lg border border-gray-200 bg-white p-6">
-        <LoadingSpinner text="Loading optimizer recommendations..." />
-      </section>
-    );
-  }
+  const explain = async () => {
+    if (!startingXi || request.current) return;
+    const controller = new AbortController();
+    request.current = controller;
+    setExplaining(true);
+    setExplanationError(null);
+    try {
+      const response = await apiClient.explainRecommendation({
+        optimizerResult: {
+          startingXi,
+          transferRecommendations: transferRecommendations ?? [],
+          targetGameweekId,
+          predictionRunIds: predictionRunIds ?? []
+        }
+      }, controller.signal);
+      if (!response.success || !response.data) throw new Error('Missing explanation');
+      if (!controller.signal.aborted) setExplanation(response.data);
+    } catch (error) {
+      if (!controller.signal.aborted) setExplanationError(apiErrorMessage(error, 'Could not load the explanation. Try again.'));
+    } finally {
+      if (request.current === controller) {
+        request.current = undefined;
+        setExplaining(false);
+      }
+    }
+  };
 
-  if (error) {
-    return (
-      <StatusPanel
-        tone="error"
-        title="Optimizer unavailable"
-        message={error}
-        action={onRetry ? { label: 'Retry optimizer', onClick: onRetry } : undefined}
-      />
-    );
-  }
-
-  if (!startingXi && transferRecommendations.length === 0) {
-    return (
-      <StatusPanel
-        tone="info"
-        title="No recommendation"
-        message={emptyMessage}
-        action={onRetry ? { label: 'Retry optimizer', onClick: onRetry } : undefined}
-      />
-    );
-  }
+  if (isLoading) return <section className="card"><LoadingSpinner text="Calculating the lineup…" /></section>;
+  if (error) return <StatusPanel tone="error" title="Lineup unavailable" message={error}
+    action={onRetry ? { label: 'Retry lineup', onClick: onRetry } : undefined} />;
+  if (!startingXi) return <StatusPanel tone="info" title="No lineup projection" message={emptyMessage} />;
 
   return (
     <section className="space-y-5">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <h2 className="text-2xl font-semibold text-fpl-dark">Optimizer recommendations</h2>
-          <p className="text-sm text-gray-600">
-            Prediction-backed squad decisions for the selected gameweek.
-          </p>
-          {contextNote && (
-            <p className="mt-1 text-xs text-gray-500">{contextNote}</p>
-          )}
-        </div>
-        <RecommendationMeta
-          targetGameweekId={targetGameweekId}
-          predictionRunIds={predictionRunIds}
-        />
-      </div>
-
-      {startingXi && (
-        <StartingXiSection recommendation={startingXi} />
+      <StartingXiSection recommendation={startingXi} />
+      {transferControls}
+      {transferRecommendations && (
+        transferRecommendations.length > 0 ? <TransfersSection recommendations={transferRecommendations}
+          beforePoints={startingXi.totalPredictedPoints} /> : <StatusPanel tone="info" title="Keep your squad this gameweek"
+          message="No transfer within your settings improves the projected lineup after points hits." />
       )}
-
-      {transferRecommendations.length > 0 ? (
-        <TransfersSection recommendations={transferRecommendations} />
-      ) : (
-        <StatusPanel
-          tone="info"
-          title="No transfer improvement found"
-          message="The optimizer did not find a valid transfer that improves projected points under the current squad rules."
-        />
-      )}
-
-      <ExplanationPanel
-        explanation={explanation}
-        isLoading={isExplanationLoading}
-        error={explanationError}
-        onRetry={() => setExplanationRefreshKey(current => current + 1)}
-      />
+      {explaining || explanation || explanationError
+        ? <ExplanationPanel explanation={explanation} isLoading={explaining} error={explanationError} onRetry={explain} />
+        : <button className="btn-secondary" type="button" onClick={explain}>Explain this plan</button>}
     </section>
   );
 };
@@ -359,30 +291,6 @@ const ExplanationSection = ({ title, items }: ExplanationSectionProps) => {
   );
 };
 
-type RecommendationMetaProps = {
-  targetGameweekId?: number;
-  predictionRunIds: number[];
-};
-
-const RecommendationMeta = ({ targetGameweekId, predictionRunIds }: RecommendationMetaProps) => {
-  if (!targetGameweekId && predictionRunIds.length === 0) return null;
-
-  return (
-    <div className="flex flex-wrap gap-2 text-xs text-gray-600">
-      {targetGameweekId && (
-        <span className="rounded-full border border-gray-200 bg-white px-3 py-1">
-          GW {targetGameweekId}
-        </span>
-      )}
-      {predictionRunIds.length > 0 && (
-        <span className="rounded-full border border-gray-200 bg-white px-3 py-1">
-          Prediction run {predictionRunIds.join(', ')}
-        </span>
-      )}
-    </div>
-  );
-};
-
 type StartingXiSectionProps = {
   recommendation: StartingXIRecommendation;
 };
@@ -401,8 +309,8 @@ const StartingXiSection = ({ recommendation }: StartingXiSectionProps) => {
         />
         <MetricTile
           icon={<Trophy className="h-5 w-5" />}
-          label="Expected points"
-          value={formatScore(recommendation.totalPredictedPoints)}
+          label="Projected points (captain ×2)"
+          value={formatPoints(recommendation.totalPredictedPoints)}
         />
         <MetricTile
           icon={<ShieldCheck className="h-5 w-5" />}
@@ -448,7 +356,7 @@ const StartingXiSection = ({ recommendation }: StartingXiSectionProps) => {
               <PlayerProjectionRow
                 key={player.playerId}
                 player={player}
-                prefix={`${index + 1}`}
+                prefix={player.position === 'GK' ? 'GK' : String(index + 1)}
               />
             ))}
           </div>
@@ -525,7 +433,7 @@ const CaptaincyPlayer = ({ label, badge, player, points }: CaptaincyPlayerProps)
     </div>
     <div className="font-semibold text-gray-900">{player.playerName}</div>
     <div className="mt-1 text-sm text-gray-600">
-      {player.position} - {formatScore(points)} projected points
+      {player.position} - {formatPoints(points)} projected points
     </div>
   </div>
 );
@@ -546,18 +454,13 @@ const PlayerProjectionRow = ({ player, prefix }: PlayerProjectionRowProps) => (
       {player.position}
     </span>
     <div className="min-w-0 flex-1">
-      <div className="truncate font-medium text-gray-900">{player.playerName}</div>
-      <div className="truncate text-xs text-gray-500">
-        {player.teamShortName || player.teamName || 'Team unknown'} - {formatPrice(player.price)}
+      <div className="break-words font-medium text-gray-900">{player.playerName}</div>
+      <div className="text-xs text-gray-600">
+        {player.teamShortName || player.teamName || 'Team unknown'} · {formatPrice(player.price)} · {predictionAvailability(player)}
       </div>
     </div>
-    {player.availability && player.availability !== 'available' && player.availability !== 'unknown' && (
-      <span className="rounded bg-yellow-100 px-2 py-1 text-xs font-medium text-yellow-800">
-        {player.availability}
-      </span>
-    )}
     <div className="text-right">
-      <div className="font-semibold text-fpl-dark">{formatScore(player.predictedPoints)}</div>
+      <div className="font-semibold text-fpl-dark">{formatPoints(player.predictedPoints)}</div>
       <div className="text-xs text-gray-500">pts</div>
     </div>
   </div>
@@ -597,9 +500,10 @@ const ConstraintSummary = ({ validation }: ConstraintSummaryProps) => (
 
 type TransfersSectionProps = {
   recommendations: TransferRecommendation[];
+  beforePoints: number;
 };
 
-const TransfersSection = ({ recommendations }: TransfersSectionProps) => (
+const TransfersSection = ({ recommendations, beforePoints }: TransfersSectionProps) => (
   <div className="rounded-lg border border-gray-200 bg-white p-5">
     <div className="mb-4 flex items-center justify-between">
       <div>
@@ -610,10 +514,11 @@ const TransfersSection = ({ recommendations }: TransfersSectionProps) => (
     </div>
 
     <div className="space-y-4">
-      {recommendations.map(recommendation => (
+      {[...recommendations].sort((a, b) => b.netExpectedPointsGain - a.netExpectedPointsGain || a.transferCount - b.transferCount).map(recommendation => (
         <TransferOption
           key={recommendation.moves.map(move => `${move.playerOut.playerId}-${move.playerIn.playerId}`).join('|')}
           recommendation={recommendation}
+          beforePoints={beforePoints}
         />
       ))}
     </div>
@@ -622,14 +527,15 @@ const TransfersSection = ({ recommendations }: TransfersSectionProps) => (
 
 type TransferOptionProps = {
   recommendation: TransferRecommendation;
+  beforePoints: number;
 };
 
-const TransferOption = ({ recommendation }: TransferOptionProps) => (
+const TransferOption = ({ recommendation, beforePoints }: TransferOptionProps) => (
   <div className="rounded-lg border border-gray-200 bg-gray-50 p-4">
     <div className="mb-4 grid gap-3 sm:grid-cols-4">
       <TransferMetric label="Transfers" value={`${recommendation.transferCount}`} />
-      <TransferMetric label="Expected gain" value={formatDelta(recommendation.expectedPointsGain)} />
-      <TransferMetric label="Net gain" value={formatDelta(recommendation.netExpectedPointsGain)} />
+      <TransferMetric label="Expected gain" value={signedPoints(recommendation.expectedPointsGain)} />
+      <TransferMetric label="Net gain" value={signedPoints(recommendation.netExpectedPointsGain)} />
       <TransferMetric label="Bank after" value={formatPrice(recommendation.bankAfterTransfers)} />
     </div>
 
@@ -639,11 +545,11 @@ const TransferOption = ({ recommendation }: TransferOptionProps) => (
           key={`${move.playerOut.playerId}-${move.playerIn.playerId}`}
           className="grid gap-3 rounded-md bg-white p-3 sm:grid-cols-[1fr_auto_1fr]"
         >
-          <TransferPlayer label="Out" name={move.playerOut.playerName} points={move.playerOut.predictedPoints} price={move.playerOut.price} />
+          <TransferPlayer label="Sell" name={move.playerOut.playerName} points={move.playerOut.predictedPoints} price={move.playerOut.sellingPrice ?? move.playerOut.price} />
           <div className="flex items-center justify-center text-gray-400">
             <ArrowRight className="h-5 w-5" />
           </div>
-          <TransferPlayer label="In" name={move.playerIn.playerName} points={move.playerIn.predictedPoints} price={move.playerIn.price} />
+          <TransferPlayer label="Buy" name={move.playerIn.playerName} points={move.playerIn.predictedPoints} price={move.playerIn.price} />
         </div>
       ))}
     </div>
@@ -651,7 +557,7 @@ const TransferOption = ({ recommendation }: TransferOptionProps) => (
     <div className="mt-4 grid gap-2 text-sm text-gray-600 sm:grid-cols-3">
       <span>Points hit: {recommendation.pointsHit}</span>
       <span>Budget impact: {formatMoneyDelta(recommendation.budgetImpact)}</span>
-      <span>Projected XI: {formatScore(recommendation.startingXi.totalPredictedPoints)} pts</span>
+      <span>Projected XI {formatPoints(beforePoints)} → {formatPoints(recommendation.startingXi.totalPredictedPoints)} pts</span>
     </div>
 
     <ConstraintSummary validation={recommendation.validation} />
@@ -682,10 +588,12 @@ const TransferPlayer = ({ label, name, points, price }: TransferPlayerProps) => 
     <div className="text-xs font-semibold uppercase text-gray-500">{label}</div>
     <div className="font-medium text-gray-900">{name}</div>
     <div className="text-sm text-gray-600">
-      {formatScore(points)} pts - {formatPrice(price)}
+      {formatPoints(points)} pts - {formatPrice(price)}
     </div>
   </div>
 );
+
+const signedPoints = (value: number) => `${value > 0 ? '+' : ''}${formatPoints(value)}`;
 
 const formatMoneyDelta = (value: number): string => {
   if (value === 0) return formatPrice(0);

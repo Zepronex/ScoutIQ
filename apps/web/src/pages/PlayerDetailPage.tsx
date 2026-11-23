@@ -1,159 +1,84 @@
-import { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { Link, useParams } from 'react-router-dom';
+import axios from 'axios';
 import { EnrichedPlayer } from '../lib/types';
-import { apiClient } from '../lib/api';
-import { formatPrice, formatForm } from '../lib/format';
-import { AlertTriangle, ArrowLeft } from 'lucide-react';
+import { apiClient, apiErrorMessage } from '../lib/api';
+import { formatPrice, formatPoints, predictionAvailability } from '../lib/format';
 import PlayerStats from '../components/PlayerStats';
+import ErrorMessage from '../components/ErrorMessage';
+import LoadingSpinner from '../components/LoadingSpinner';
+import GameweekStatus from '../components/GameweekStatus';
+import { SquadState } from '../state/useSquad';
+import { PlanningState } from '../state/usePlanning';
 
-const PlayerDetailPage = () => {
-  const { id } = useParams<{ id: string }>();
-  const navigate = useNavigate();
-  const [player, setPlayer] = useState<EnrichedPlayer | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+const statusLabels: Record<string, string> = { a: 'Available', d: 'Doubtful', i: 'Injured', s: 'Suspended', n: 'Unavailable', u: 'Unavailable' };
+
+export default function PlayerDetailPage({ squadState, planning }: { squadState: SquadState; planning: PlanningState }) {
+  const { id } = useParams();
+  const playerId = Number(id);
+  const validId = typeof id === 'string' && /^\d+$/.test(id) && Number.isSafeInteger(playerId) && playerId > 0;
+  const [loaded, setLoaded] = useState<{ id: number; player?: EnrichedPlayer; error?: string; missing?: boolean }>();
+  const [retry, setRetry] = useState(0);
+  const updated = planning.data?.gameweek?.sourceUpdatedAt;
 
   useEffect(() => {
-    if (id) {
-      loadPlayerData();
-    }
-  }, [id]);
+    if (!validId) return;
+    const controller = new AbortController();
+    setLoaded(undefined);
+    void apiClient.getPlayerById(playerId, controller.signal).then(response => {
+      if (!controller.signal.aborted) setLoaded({ id: playerId, player: response.data, missing: !response.data });
+    }).catch(error => {
+      if (controller.signal.aborted) return;
+      const missing = axios.isAxiosError(error) && error.response?.status === 404;
+      setLoaded({ id: playerId, missing, error: apiErrorMessage(error, 'Could not load this player.') });
+    });
+    return () => controller.abort();
+  }, [playerId, validId, retry, updated]);
 
-  const loadPlayerData = async () => {
-    if (!id) return;
-
-    setIsLoading(true);
-    setError(null);
-
-    try {
-      // Load player data
-      const playerResponse = await apiClient.getPlayerById(parseInt(id));
-      if (playerResponse.success && playerResponse.data) {
-        setPlayer(playerResponse.data);
-      } else {
-        setError('Player not found');
-      }
-    } catch {
-      setError('Failed to load player data');
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const getScoreLabel = (score: number): { label: string; color: string } => {
-    if (score >= 8) return { label: 'Perfect', color: 'text-green-600 bg-green-100' };
-    if (score >= 6) return { label: 'Good', color: 'text-blue-600 bg-blue-100' };
-    if (score >= 4) return { label: 'Poor', color: 'text-yellow-600 bg-yellow-100' };
-    return { label: 'Urgent', color: 'text-red-600 bg-red-100' };
-  };
-
-  const getPositionColor = (pos: string): string => {
-    switch (pos) {
-      case 'GK': return 'bg-green-100 text-green-800';
-      case 'DEF': return 'bg-blue-100 text-blue-800';
-      case 'MID': return 'bg-yellow-100 text-yellow-800';
-      case 'FWD': return 'bg-red-100 text-red-800';
-      default: return 'bg-gray-100 text-gray-800';
-    }
-  };
-
-  if (isLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-fpl-green mx-auto mb-4"></div>
-          <p className="text-gray-600">Loading player data...</p>
-        </div>
-      </div>
-    );
+  const player = loaded?.id === playerId ? loaded.player : undefined;
+  if (!validId || (loaded?.id === playerId && loaded.missing)) {
+    return <div className="card">
+      <h1 className="page-title">Player not found</h1>
+      <p className="mt-2 text-slate-600">Search the current FPL player list or return to the rankings.</p>
+      <Link className="text-link mt-4 inline-block" to="/top-players">Browse player projections</Link>
+    </div>;
   }
+  if (loaded?.id === playerId && loaded.error) return <ErrorMessage message={loaded.error} action={{ label: 'Retry player', onClick: () => setRetry(value => value + 1) }} />;
+  if (!player) return <LoadingSpinner text="Loading player…" />;
 
-  if (error || !player) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-center max-w-md mx-auto p-6">
-          <AlertTriangle className="h-12 w-12 text-red-500 mx-auto mb-4" />
-          <h1 className="text-2xl font-bold text-red-800 mb-2">Player Not Found</h1>
-          <p className="text-red-600 mb-4">{error || 'The requested player could not be found.'}</p>
-          <button 
-            onClick={() => navigate('/')} 
-            className="btn-primary"
-          >
-            Go Home
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  const scoreInfo = getScoreLabel(player.score || 0);
-
+  const selected = [...squadState.squad.startingXI, ...squadState.squad.bench].some(slot => slot.id === playerId);
+  const projection = planning.data?.players.find(row => row.playerId === playerId);
+  const week = planning.data?.gameweek;
+  const draftIneligible = squadState.squad.mode !== 'existing' && player.status === 'u';
   return (
-    <div className="min-h-screen bg-gray-50">
-      <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* Header */}
-        <div className="mb-8">
-          <button
-            onClick={() => navigate(-1)}
-            className="flex items-center text-gray-600 hover:text-fpl-dark transition-colors mb-4"
-          >
-            <ArrowLeft className="w-5 h-5 mr-2" />
-            Back
-          </button>
-          
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-            <div className="flex items-start justify-between">
-              <div className="flex-1">
-                <div className="flex items-center space-x-4 mb-4">
-                  <span className={`badge ${getPositionColor(player.pos)}`}>
-                    {player.pos}
-                  </span>
-                  <h1 className="text-3xl font-bold text-gray-900">{player.name}</h1>
-                </div>
-                
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-                  <div>
-                    <div className="text-gray-500">Team</div>
-                    <div className="font-semibold">{player.teamShort}</div>
-                  </div>
-                  <div>
-                    <div className="text-gray-500">Price</div>
-                    <div className="font-semibold">{formatPrice(player.price)}</div>
-                  </div>
-                  <div>
-                    <div className="text-gray-500">Form</div>
-                    <div className="font-semibold">{formatForm(player.form)}</div>
-                  </div>
-                  <div>
-                    <div className="text-gray-500">Status</div>
-                    <div className="font-semibold capitalize">
-                      {player.status === 'a' ? 'Available' : 'Unavailable'}
-                    </div>
-                  </div>
-                </div>
-              </div>
-              
-              <div className="text-right">
-                <div className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${scoreInfo.color}`}>
-                  {scoreInfo.label}
-                </div>
-                <div className="text-2xl font-bold text-gray-900 mt-2">
-                  {(player.score || 0).toFixed(1)}
-                </div>
-                <div className="text-sm text-gray-500">Score</div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Player Stats */}
-        <div className="mb-8">
-          <PlayerStats player={player} />
-        </div>
-
+    <div className="space-y-5">
+      <div className="flex flex-wrap gap-4 text-sm">
+        <Link to="/top-players" className="text-link">Player projections</Link>
+        <Link to="/squad" className="text-link">Your squad</Link>
       </div>
+      <section className="card flex flex-wrap items-start justify-between gap-5">
+        <div className="min-w-0">
+          <p className="text-sm font-semibold text-fpl-green-dark">{player.teamShort} · {player.pos}</p>
+          <h1 className="page-title mt-1 break-words">{player.name}</h1>
+          <p className="mt-2 text-slate-600">{formatPrice(player.price)} · {statusLabels[player.status] ?? 'Availability unknown'}</p>
+          <button type="button" className="btn-primary mt-4" disabled={selected || draftIneligible} onClick={() => squadState.addPlayer(player)}>
+            {selected ? 'In your squad' : draftIneligible ? 'Unavailable for a new draft' : 'Add to squad'}
+          </button>
+        </div>
+        <div className="rounded-lg bg-slate-100 p-4">
+          <h2 className="text-sm font-semibold text-slate-700">{week ? `Gameweek ${week.id} projection` : 'Gameweek projection'}</h2>
+          {projection ? <>
+            <p className="mt-1 text-3xl font-bold tabular-nums text-fpl-dark">{formatPoints(projection.predictedPoints)} <span className="text-sm">pts</span></p>
+            <p className="mt-1 text-sm text-slate-600">{predictionAvailability(projection)}</p>
+          </> : <p className="mt-1 text-sm text-slate-600">{planning.loading ? 'Loading projection…' : 'Projection unavailable'}</p>}
+        </div>
+      </section>
+      <GameweekStatus planning={planning} />
+      {squadState.error && <ErrorMessage message={squadState.error} onDismiss={squadState.clearError} />}
+      <section>
+        <h2 className="mb-3 text-lg font-semibold">FPL season statistics</h2>
+        <PlayerStats player={player} />
+      </section>
     </div>
   );
-};
-
-export default PlayerDetailPage;
+}

@@ -1,173 +1,60 @@
-import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { Search } from 'lucide-react';
-import { apiClient } from '../lib/api';
-import { EnrichedPlayer } from '../lib/types';
-import { useDebounce } from '../hooks/useDebounce';
-import { formatPrice, getPositionColor } from '../lib/format';
+import { useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { Plus, Search } from 'lucide-react';
+import { EnrichedPlayer, Pos } from '../lib/types';
+import { formatPrice, normalizePlayerSearch, positionNames } from '../lib/format';
 
-interface PlayerSearchProps {
-  onAddPlayer: (player: EnrichedPlayer, isStarting: boolean) => void;
-}
-
-type SearchStatus = 'idle' | 'loading' | 'loaded' | 'error';
-
-const PlayerSearch = ({ onAddPlayer }: PlayerSearchProps) => {
-  const navigate = useNavigate();
-  const [searchQuery, setSearchQuery] = useState('');
-  const [searchResults, setSearchResults] = useState<EnrichedPlayer[]>([]);
-  const [isSearching, setIsSearching] = useState(false);
-  const [searchStatus, setSearchStatus] = useState<SearchStatus>('idle');
-  const [searchError, setSearchError] = useState<string | null>(null);
-  const [requiredCommands, setRequiredCommands] = useState<string[]>([]);
-  
-  // debounce search to reduce api calls while typing
-  const debouncedSearchQuery = useDebounce(searchQuery, 300);
-
-  const handleSearch = async (query: string) => {
-    const trimmedQuery = query.trim();
-
-    if (trimmedQuery.length < 2) {
-      setSearchResults([]);
-      setSearchStatus('idle');
-      setSearchError(null);
-      setRequiredCommands([]);
-      return;
-    }
-
-    setIsSearching(true);
-    setSearchStatus('loading');
-    setSearchError(null);
-    setRequiredCommands([]);
-
-    try {
-      const response = await apiClient.searchPlayer(trimmedQuery);
-      if (response.success && response.data && Array.isArray(response.data)) {
-        setSearchResults(response.data);
-        setSearchStatus('loaded');
-      } else {
-        setSearchResults([]);
-        setSearchStatus('error');
-        setSearchError(response.error || 'Could not load player search results.');
-        setRequiredCommands(response.requiredCommands || []);
-      }
-    } catch {
-      setSearchResults([]);
-      setSearchStatus('error');
-      setSearchError('Could not load player search results. Confirm that the local API is running.');
-      setRequiredCommands([]);
-    } finally {
-      setIsSearching(false);
-    }
-  };
-
-  // search when debounced query changes
-  useEffect(() => {
-    handleSearch(debouncedSearchQuery);
-  }, [debouncedSearchQuery]);
-
-  const handleAddPlayer = (player: EnrichedPlayer, isStarting: boolean = true) => {
-    onAddPlayer(player, isStarting);
-    setSearchQuery('');
-    setSearchResults([]);
-    setSearchStatus('idle');
-    setSearchError(null);
-    setRequiredCommands([]);
-  };
-
-  const showNoMatches = (
-    !isSearching &&
-    searchStatus === 'loaded' &&
-    debouncedSearchQuery.trim().length >= 2 &&
-    searchResults.length === 0
-  );
+export default function PlayerSearch({ players, selected, existingSquad, onAddPlayer }: {
+  players: EnrichedPlayer[];
+  selected: Set<number>;
+  existingSquad: boolean;
+  onAddPlayer: (player: EnrichedPlayer) => void;
+}) {
+  const [search, setSearch] = useState('');
+  const [position, setPosition] = useState<Pos | ''>('');
+  const [limit, setLimit] = useState(8);
+  const filtered = useMemo(() => {
+    const words = normalizePlayerSearch(search).split(' ');
+    return players.filter(player => {
+      const label = normalizePlayerSearch(`${player.name} ${player.teamShort}`);
+      return (!position || player.pos === position) && words.every(word => label.includes(word));
+    }).sort((left, right) => right.ownership - left.ownership || left.name.localeCompare(right.name));
+  }, [players, position, search]);
 
   return (
-    <div className="mb-6">
+    <section className="card min-w-0 space-y-4" aria-labelledby="add-players">
+      <h2 className="text-xl font-semibold" id="add-players">Add players</h2>
       <div className="relative">
-        <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
-        <input
-          type="text"
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          placeholder="Search for players..."
-          className="input-field pl-10"
-        />
+        <Search className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-slate-500" aria-hidden="true" />
+        <input aria-label="Search squad players" placeholder="Search by name or club" type="search" className="input-field pl-9"
+          value={search} onChange={event => { setSearch(event.target.value); setLimit(8); }} />
       </div>
-
-      {searchQuery.length > 0 && searchQuery.trim().length < 2 && (
-        <p className="mt-2 text-sm text-gray-500">Enter at least 2 characters to search loaded players.</p>
-      )}
-
-      {searchResults.length > 0 && (
-        <div className="mt-2 border border-gray-200 rounded-lg bg-white shadow-lg max-h-60 overflow-y-auto">
-          {searchResults.map((player) => (
-            <div
-              key={player.id}
-              className="flex items-center justify-between p-3 hover:bg-gray-50 border-b border-gray-100 last:border-b-0"
-            >
-              <div className="flex-1">
-                <div className="font-semibold">{player.name}</div>
-                <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-gray-600">
-                  <span className={`badge ${getPositionColor(player.pos)}`}>{player.pos}</span>
-                  <span>{player.teamShort}</span>
-                  <span>{formatPrice(player.price)}</span>
-                </div>
-              </div>
-              <div className="flex space-x-2">
-                <button
-                  onClick={() => navigate(`/player/${player.id}`)}
-                  className="btn-secondary text-xs px-3 py-1"
-                >
-                  View Details
-                </button>
-                <button
-                  onClick={() => handleAddPlayer(player, true)}
-                  className="btn-primary text-xs px-3 py-1"
-                >
-                  Starting XI
-                </button>
-                <button
-                  onClick={() => handleAddPlayer(player, false)}
-                  className="btn-secondary text-xs px-3 py-1"
-                >
-                  Bench
-                </button>
-              </div>
+      <div className="flex flex-wrap gap-1.5" aria-label="Squad player position">
+        <button type="button" className="filter-chip" aria-pressed={!position} onClick={() => { setPosition(''); setLimit(8); }}>All</button>
+        {(Object.keys(positionNames) as Pos[]).map(pos => (
+          <button key={pos} type="button" className="filter-chip" aria-pressed={position === pos} onClick={() => {
+            setPosition(pos);
+            setLimit(8);
+          }}>{pos}</button>
+        ))}
+      </div>
+      <p className="text-sm text-slate-600" role="status">{filtered.length ? `Showing ${Math.min(filtered.length, limit)} of ${filtered.length} players` : 'No players match your search.'}</p>
+      <ul className="divide-y divide-slate-200">
+        {filtered.slice(0, limit).map(player => (
+          <li key={player.id} className="flex items-center justify-between gap-2 py-2.5">
+            <div className="min-w-0">
+              <Link to={`/player/${player.id}`} className="text-link font-semibold">{player.name}</Link>
+              <p className="mt-0.5 text-sm text-slate-600">{player.teamShort} · {player.pos} · {formatPrice(player.price)}</p>
             </div>
-          ))}
-        </div>
-      )}
-
-      {showNoMatches && (
-        <div className="mt-2 rounded-lg border border-gray-200 bg-white p-4 text-sm text-gray-700">
-          No matching players were found for "{debouncedSearchQuery.trim()}".
-        </div>
-      )}
-
-      {!isSearching && searchStatus === 'error' && (
-        <div className="mt-2 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-800">
-          <p className="font-medium">Player search unavailable</p>
-          <p className="mt-1">{searchError}</p>
-          {requiredCommands.length > 0 && (
-            <div className="mt-3">
-              <p className="font-medium">Run the local data pipeline:</p>
-              <pre className="mt-2 overflow-x-auto rounded-md bg-white p-3 text-xs text-gray-800">
-                {requiredCommands.join('\n')}
-              </pre>
-            </div>
-          )}
-        </div>
-      )}
-
-      {isSearching && (
-        <div className="mt-2 text-center text-gray-500">
-          <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-fpl-green mx-auto"></div>
-          <p className="text-sm mt-2">Searching...</p>
-        </div>
-      )}
-    </div>
+            <button type="button" className="btn-secondary shrink-0 text-sm" aria-label={`Add ${player.name}`}
+              disabled={selected.has(player.id) || (!existingSquad && player.status === 'u')} onClick={() => onAddPlayer(player)}>
+              {selected.has(player.id) ? 'Added' : !existingSquad && player.status === 'u' ? 'Unavailable'
+                : <><Plus className="h-4 w-4" aria-hidden="true" /> Add</>}
+            </button>
+          </li>
+        ))}
+      </ul>
+      {filtered.length > limit && <button className="btn-secondary w-full" onClick={() => setLimit(limit + 12)}>Show more players</button>}
+    </section>
   );
-};
-
-export default PlayerSearch;
+}

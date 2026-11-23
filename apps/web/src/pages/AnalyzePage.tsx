@@ -1,476 +1,248 @@
-import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
-import {
-  OptimizerSquadInput,
-  Pos,
-  SquadAnalysis,
-  Squad,
-  SquadSlot,
-  StartingXIRecommendation,
-  TransferRecommendation
-} from '../lib/types';
-import PlayerRow from '../components/PlayerRow';
-import { formatScore, formatPrice, getFormationString } from '../lib/format';
-import { apiClient } from '../lib/api';
+import { useEffect, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { apiClient, apiErrorMessage } from '../lib/api';
+import { OptimizerSquadInput, Squad, SquadAnalysis, StartingXIOptimizerResult, TransferRecommendation } from '../lib/types';
+import { formatPoints, formatPrice } from '../lib/format';
+import { PlanningState } from '../state/usePlanning';
+import ErrorMessage from '../components/ErrorMessage';
+import GameweekStatus from '../components/GameweekStatus';
+import LoadingSpinner from '../components/LoadingSpinner';
 import OptimizerRecommendations from '../components/OptimizerRecommendations';
 
-type OptimizerRecommendationState = {
-  startingXi: StartingXIRecommendation | null;
-  transfers: TransferRecommendation[];
-  targetGameweekId?: number;
-  predictionRunIds: number[];
-};
-
-const isRecord = (value: unknown): value is Record<string, unknown> => {
-  return typeof value === 'object' && value !== null;
-};
-
-const toOptimizerSquadInput = (squad: Squad): OptimizerSquadInput => ({
-  playerIds: [...squad.startingXI, ...squad.bench].map(player => player.id),
-  bank: squad.bank,
-  budget: 100
-});
-
-const mergePredictionRunIds = (...runIdGroups: number[][]): number[] => {
-  return [...new Set(runIdGroups.flat())].sort((left, right) => left - right);
-};
-
-const getOptimizerErrorCode = (value: unknown): string | undefined => {
-  const payload = isRecord(value) && isRecord(value.response)
-    ? value.response.data
-    : value;
-
-  return isRecord(payload) && typeof payload.error === 'string'
-    ? payload.error
-    : undefined;
-};
-
-const getOptimizerErrorMessage = (value: unknown): string => {
-  const code = getOptimizerErrorCode(value);
-
-  switch (code) {
-    case 'no_prediction_runs_loaded':
-      return 'Prediction data is missing. Run the prediction pipeline and load predictions into PostgreSQL.';
-    case 'squad_predictions_missing':
-      return 'Some squad players do not have prediction rows. Re-run the prediction pipeline and reload predictions into PostgreSQL.';
-    case 'invalid_squad':
-      return 'The squad is invalid for optimizer rules. Check squad size, position counts, budget, duplicates, and max three players per club.';
-    case 'invalid_optimizer_request':
-      return 'The optimizer request is invalid. Check that the stored squad has 15 valid players.';
-    case 'available_players_required':
-    case 'prediction_candidates_required':
-      return 'Prediction candidates are unavailable. Load prediction-serving data before requesting transfer recommendations.';
-    default:
-      return 'Could not load optimizer recommendations. Check that the API is running and the prediction database is reachable.';
-  }
-};
-
-const AnalyzePage = () => {
-  const navigate = useNavigate();
-  const [analysis, setAnalysis] = useState<SquadAnalysis | null>(null);
-  const [originalSquad, setOriginalSquad] = useState<Squad | null>(null);
-  const [optimizerState, setOptimizerState] = useState<OptimizerRecommendationState | null>(null);
-  const [isOptimizerLoading, setIsOptimizerLoading] = useState(false);
-  const [optimizerError, setOptimizerError] = useState<string | null>(null);
-  const [optimizerRefreshKey, setOptimizerRefreshKey] = useState(0);
-  const [isLoading, setIsLoading] = useState(true);
-  const [isReAnalyzing, setIsReAnalyzing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const isAnalysisWeights = (value: unknown): value is SquadAnalysis['weights'] => {
-    if (!isRecord(value)) return false;
-    return ['form', 'xg90', 'xa90', 'expMin', 'next3Ease', 'avgPoints', 'value', 'ownership']
-      .every((key) => typeof value[key] === 'number');
+function readOptimizerError(error: unknown, fallback: string) {
+  const message = apiErrorMessage(error, fallback);
+  const messages: Record<string, string> = {
+    planning_gameweek_changed: 'A newer gameweek snapshot is available. Refresh the gameweek data to continue.',
+    no_planning_predictions: 'Projections for the next deadline are unavailable.',
+    squad_predictions_missing: 'One or more players are missing a projection. Try again after the next data refresh.',
+    invalid_squad: 'The squad failed a rule check. Review your saved players and budget.',
+    invalid_selling_price: 'A selling price is above the current market price. Update it in the squad builder.',
+    selling_prices_required: 'Enter your bank and every selling price in the squad builder to check transfer affordability.',
+    bank_required: 'Enter your current bank balance in the squad builder.'
   };
+  return messages[message] ?? message;
+}
 
-  const isPos = (value: unknown): value is Pos => {
-    return value === 'GK' || value === 'DEF' || value === 'MID' || value === 'FWD';
+function validMoney(value: number | undefined, min: number, max: number): value is number {
+  return value !== undefined && Number.isFinite(value) && value >= min && value <= max &&
+    Math.abs(Math.round(value * 10) - value * 10) < 1e-8;
+}
+
+function optimizerInput(squad: Squad, analysis: SquadAnalysis): OptimizerSquadInput {
+  const existingSquad = squad.mode === 'existing';
+  return {
+    playerIds: analysis.results.map(result => result.player.id),
+    bank: existingSquad ? (validMoney(squad.bank, 0, 100) ? squad.bank : 0) : analysis.bankLeft,
+    existingSquad
   };
+}
 
-  const isSquadSlot = (value: unknown): value is SquadSlot => {
-    return (
-      isRecord(value) &&
-      typeof value.id === 'number' &&
-      isPos(value.pos) &&
-      typeof value.price === 'number' &&
-      (value.name === undefined || typeof value.name === 'string') &&
-      (value.teamShort === undefined || typeof value.teamShort === 'string')
-    );
-  };
+export default function AnalyzePage({ squad, planning }: { squad: Squad; planning: PlanningState }) {
+  const [analysis, setAnalysis] = useState<SquadAnalysis>();
+  const [analysisError, setAnalysisError] = useState('');
+  const [analysisRetry, setAnalysisRetry] = useState(0);
+  const [lineup, setLineup] = useState<StartingXIOptimizerResult>();
+  const [lineupError, setLineupError] = useState('');
+  const [lineupRetry, setLineupRetry] = useState(0);
+  const [transferOptions, setTransferOptions] = useState<TransferRecommendation[]>();
+  const [transferError, setTransferError] = useState('');
+  const [loadingTransfers, setLoadingTransfers] = useState(false);
+  const owned = squad.mode === 'existing';
+  const [freeTransfers, setFreeTransfers] = useState<number | ''>(owned ? '' : 1);
+  const [hits, setHits] = useState(0);
+  const transferRequest = useRef<AbortController>();
+  const runId = planning.data?.gameweek?.runId;
+  const updatedAt = planning.data?.gameweek?.sourceUpdatedAt;
+  const analysisRevision = useRef(updatedAt);
+  const complete = squad.startingXI.length === 11 && squad.bench.length === 4;
 
-  const isSquad = (value: unknown): value is Squad => {
-    return (
-      isRecord(value) &&
-      Array.isArray(value.startingXI) &&
-      value.startingXI.every(isSquadSlot) &&
-      Array.isArray(value.bench) &&
-      value.bench.every(isSquadSlot) &&
-      typeof value.bank === 'number'
-    );
-  };
+  useEffect(() => {
+    if (!updatedAt) return;
+    if (analysisRevision.current && analysisRevision.current !== updatedAt) setAnalysisRetry(value => value + 1);
+    analysisRevision.current = updatedAt;
+  }, [updatedAt]);
 
-  const isSquadAnalysis = (value: unknown): value is SquadAnalysis => {
-    if (!isRecord(value)) return false;
-    return (
-      Array.isArray(value.results) &&
-      typeof value.averageScore === 'number' &&
-      typeof value.flaggedPlayers === 'number' &&
-      typeof value.bankLeft === 'number' &&
-      typeof value.totalScore === 'number' &&
-      typeof value.timestamp === 'string' &&
-      isAnalysisWeights(value.weights)
-    );
-  };
-
-  const extractSquadAnalysis = (value: unknown): SquadAnalysis | null => {
-    if (isSquadAnalysis(value)) return value;
-    if (isRecord(value) && value.success === true && isSquadAnalysis(value.data)) {
-      return value.data;
+  useEffect(() => {
+    setAnalysis(undefined);
+    setAnalysisError('');
+    if (!complete) return;
+    const controller = new AbortController();
+    const request = { ...squad, bank: owned && !validMoney(squad.bank, 0, 100) ? 0 : Math.max(0, squad.bank) };
+    if (owned) {
+      const sanitize = (slot: Squad['bench'][number]) => ({
+        ...slot, sellingPrice: validMoney(slot.sellingPrice, 0.1, slot.price) ? slot.sellingPrice : undefined
+      });
+      request.startingXI = squad.startingXI.map(sanitize);
+      request.bench = squad.bench.map(sanitize);
     }
-    return null;
+    void apiClient.analyzeSquad(request, controller.signal).then(response => {
+      if (controller.signal.aborted) return;
+      if (response.success && response.data) setAnalysis(response.data);
+      else setAnalysisError(response.error ?? 'Could not review the squad.');
+    }).catch(error => {
+      if (!controller.signal.aborted) setAnalysisError(apiErrorMessage(error, 'Could not review the squad.'));
+    });
+    return () => controller.abort();
+  }, [squad, complete, owned, analysisRetry]);
+
+  useEffect(() => {
+    setLineup(undefined);
+    setLineupError('');
+    if (!analysis || !runId) return;
+    const controller = new AbortController();
+    void apiClient.getStartingXIRecommendation({
+      squad: optimizerInput(squad, analysis),
+      predictionRunId: runId
+    }, controller.signal).then(response => {
+      if (!controller.signal.aborted) setLineup(response.data);
+    }).catch(error => {
+      if (!controller.signal.aborted) setLineupError(readOptimizerError(error, 'Could not calculate a lineup. Try again shortly.'));
+    });
+    return () => controller.abort();
+  }, [analysis, runId, lineupRetry, squad]);
+
+  const clearTransfers = () => {
+    transferRequest.current?.abort();
+    transferRequest.current = undefined;
+    setTransferOptions(undefined);
+    setTransferError('');
+    setLoadingTransfers(false);
   };
 
   useEffect(() => {
-    const loadAnalysis = () => {
-      try {
-        const storedAnalysis = sessionStorage.getItem('fpl-analysis-results');
-        const storedSquad = sessionStorage.getItem('fpl-original-squad');
-        
-        if (storedAnalysis && storedSquad) {
-          const parsed: unknown = JSON.parse(storedAnalysis);
-          const squadData: unknown = JSON.parse(storedSquad);
-          
-          // Extract the actual analysis data from the API response
-          const analysisData = extractSquadAnalysis(parsed);
-          if (!analysisData) {
-            setError('Failed to load analysis results.');
-            return;
-          }
-          if (!isSquad(squadData)) {
-            setError('Failed to load original squad.');
-            return;
-          }
-          setAnalysis(analysisData);
-          setOriginalSquad(squadData);
-        } else {
-          setError('No analysis results found. Please analyze your squad first.');
-        }
-      } catch {
-        // Error loading analysis
-        setError('Failed to load analysis results.');
-      } finally {
-        setIsLoading(false);
-      }
-    };
+    clearTransfers();
+    return () => transferRequest.current?.abort();
+  }, [analysis, runId, lineupRetry]);
 
-    loadAnalysis();
-  }, []);
+  const slots = [...squad.startingXI, ...squad.bench];
+  const sellingPrices = Object.fromEntries(slots.map(slot => [slot.id, slot.sellingPrice]));
+  const bankConfirmed = squad.bankConfirmed && validMoney(squad.bank, 0, 100);
+  const pricesComplete = analysis?.results.every(({ player }) => validMoney(sellingPrices[player.id], 0.1, player.price));
+  const validFinances = !owned || Boolean(bankConfirmed && pricesComplete);
+  const currentLineup = runId && lineup?.predictionRunIds.includes(runId) ? lineup : undefined;
+  const clubCounts = new Map<number, number>();
+  for (const { player } of analysis?.results ?? []) clubCounts.set(player.teamId, (clubCounts.get(player.teamId) ?? 0) + 1);
 
-  useEffect(() => {
-    if (!originalSquad) return;
-
-    const playerIds = [...originalSquad.startingXI, ...originalSquad.bench].map(player => player.id);
-    if (playerIds.length !== 15) {
-      setOptimizerState(null);
-      setOptimizerError('Optimizer recommendations require a complete 15-player squad.');
+  const compare = async () => {
+    if (freeTransfers === '' || !analysis || !runId || !currentLineup || !validFinances || transferRequest.current) return;
+    if (freeTransfers === 0 && hits === 0) {
+      setTransferOptions([]);
       return;
     }
-
-    let cancelled = false;
-
-    const loadOptimizerRecommendations = async () => {
-      setIsOptimizerLoading(true);
-      setOptimizerError(null);
-      setOptimizerState(null);
-
-      try {
-        const optimizerSquad = toOptimizerSquadInput(originalSquad);
-        const [startingXiResponse, transfersResponse] = await Promise.all([
-          apiClient.getStartingXIRecommendation({ squad: optimizerSquad }),
-          apiClient.getTransferRecommendations({
-            currentSquad: optimizerSquad,
-            freeTransfers: 1,
-            maxHits: 0
-          })
-        ]);
-
-        if (!startingXiResponse.success || !startingXiResponse.data) {
-          throw startingXiResponse;
-        }
-
-        if (!transfersResponse.success || !transfersResponse.data) {
-          throw transfersResponse;
-        }
-
-        if (!cancelled) {
-          setOptimizerState({
-            startingXi: startingXiResponse.data.startingXi,
-            transfers: transfersResponse.data.recommendations,
-            targetGameweekId: startingXiResponse.data.targetGameweekId ?? transfersResponse.data.targetGameweekId,
-            predictionRunIds: mergePredictionRunIds(
-              startingXiResponse.data.predictionRunIds,
-              transfersResponse.data.predictionRunIds
-            )
-          });
-        }
-      } catch (optimizerRequestError) {
-        if (!cancelled) {
-          setOptimizerError(getOptimizerErrorMessage(optimizerRequestError));
-        }
-      } finally {
-        if (!cancelled) {
-          setIsOptimizerLoading(false);
-        }
-      }
-    };
-
-    loadOptimizerRecommendations();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [originalSquad, optimizerRefreshKey]);
-
-  const handleNewAnalysis = () => {
-    sessionStorage.removeItem('fpl-analysis-results');
-    sessionStorage.removeItem('fpl-original-squad');
-    navigate('/squad');
-  };
-
-  const handleReAnalyze = async () => {
-    if (!originalSquad) return;
-    
-    setIsReAnalyzing(true);
-    setError(null);
-
+    const controller = new AbortController();
+    transferRequest.current = controller;
+    setTransferOptions(undefined);
+    setTransferError('');
+    setLoadingTransfers(true);
     try {
-      const response = await apiClient.analyzeSquad(originalSquad);
-      
-      // Store results in session storage for the analyze page
-      sessionStorage.setItem('fpl-analysis-results', JSON.stringify(response));
-      
-      if (response.success && response.data) {
-        setAnalysis(response.data);
-      } else {
-        setError(response.error || 'Re-analysis failed. Please try again.');
-      }
-    } catch {
-      setError('Re-analysis failed. Please try again.');
+      const currentSquad = optimizerInput(squad, analysis);
+      if (owned) currentSquad.sellingPrices = sellingPrices as Record<number, number>;
+      const response = await apiClient.getTransferRecommendations({
+        currentSquad, freeTransfers, maxHits: hits, predictionRunId: runId
+      }, controller.signal);
+      if (!controller.signal.aborted) setTransferOptions(response.data?.recommendations ?? []);
+    } catch (error) {
+      if (!controller.signal.aborted) setTransferError(readOptimizerError(error, 'Could not compare transfers. Try again shortly.'));
     } finally {
-      setIsReAnalyzing(false);
+      if (transferRequest.current === controller) {
+        transferRequest.current = undefined;
+        setLoadingTransfers(false);
+      }
     }
   };
 
-  if (isLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-fpl-green mx-auto mb-4"></div>
-          <p className="text-gray-600">Loading analysis results...</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-center">
-          <div className="bg-red-50 border border-red-200 rounded-lg p-6 max-w-md">
-            <h2 className="text-xl font-semibold text-red-800 mb-2">Error</h2>
-            <p className="text-red-700 mb-4">{error}</p>
-            <button
-              onClick={handleNewAnalysis}
-              className="btn-primary"
-            >
-              Start New Analysis
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  if (!analysis) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-center">
-          <h2 className="text-2xl font-semibold text-gray-800 mb-4">No Analysis Found</h2>
-          <p className="text-gray-600 mb-6">Please analyze your squad first.</p>
-          <button
-            onClick={handleNewAnalysis}
-            className="btn-primary"
-          >
-            Build Squad
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  const startingXIResults = analysis.results.filter((_, index) => index < 11);
-  const benchResults = analysis.results.filter((_, index) => index >= 11);
-
   return (
-    <div className="space-y-8">
-      {/* Header */}
-      <div className="flex justify-between items-start">
+    <div className="space-y-5">
+      <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="text-4xl font-bold text-fpl-dark mb-2">
-            Squad Analysis Results
-          </h1>
-          <p className="text-gray-600">
-            Analysis completed at {new Date(analysis.timestamp).toLocaleString()}
-          </p>
+          <h1 className="page-title">Gameweek plan</h1>
+          <p className="mt-2 text-slate-600">Review your best projected XI, captaincy and transfer options for the next deadline.</p>
         </div>
-        <div className="flex space-x-3">
-          <button 
-            onClick={handleReAnalyze}
-            disabled={isReAnalyzing}
-            className="btn-primary disabled:opacity-50 disabled:cursor-not-allowed text-lg px-8 py-4"
-          >
-            {isReAnalyzing ? (
-              <>
-                <svg className="animate-spin -ml-1 mr-2 h-5 w-5 text-white inline" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                </svg>
-                Re-analyzing...
-              </>
-            ) : (
-              'Re-analyze'
+        <Link to="/squad" className="btn-secondary">Edit squad</Link>
+      </div>
+      <GameweekStatus planning={planning} />
+
+      {!complete ? <section className="card">
+        <h2 className="text-xl font-semibold">Complete your squad first</h2>
+        <p className="mt-2 text-sm text-slate-600">{slots.length} of 15 players saved. Add players to fill the starting XI and bench.</p>
+        <Link to="/squad" className="btn-primary mt-4">Open squad builder</Link>
+      </section> : analysisError ? <ErrorMessage title="Squad review unavailable" message={analysisError}
+        action={{ label: 'Retry squad review', onClick: () => setAnalysisRetry(value => value + 1) }} />
+        : !analysis ? <LoadingSpinner text="Reviewing your squad…" /> : (
+          <>
+            {owned && [...clubCounts.values()].some(count => count > 3) && (
+              <ErrorMessage type="warning" title="Club limit exceeded"
+                message="Your existing lineup is available. Any recommended transfer plan must bring each club back to three players or fewer." />
             )}
-          </button>
-          <button 
-            onClick={handleNewAnalysis}
-            className="btn-secondary text-lg px-8 py-4"
-          >
-            New Squad
-          </button>
-        </div>
-      </div>
-
-      {/* Error Display */}
-      {error && (
-        <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-          <div className="flex justify-between items-start">
-            <div>
-              <h3 className="text-red-800 font-medium">Error</h3>
-              <p className="text-red-700 mt-1">{error}</p>
-            </div>
-            <button
-              onClick={() => setError(null)}
-              className="text-red-600 hover:text-red-800"
-            >
-              x
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Main Content */}
-      <div className="space-y-8">
-          {/* Summary Cards */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-            <div className="card text-center">
-              <div className="text-3xl font-bold text-fpl-green mb-2">
-                {formatScore(analysis.averageScore)}
+            <OptimizerRecommendations
+              startingXi={currentLineup?.startingXi}
+              transferRecommendations={currentLineup ? transferOptions : undefined}
+              isLoading={planning.loading || Boolean(runId && !currentLineup && !lineupError)}
+              error={lineupError}
+              onRetry={() => setLineupRetry(value => value + 1)}
+              emptyMessage="The next deadline has no projections yet. Your saved squad and FPL statistics are available."
+              targetGameweekId={currentLineup?.targetGameweekId}
+              predictionRunIds={currentLineup?.predictionRunIds}
+              transferControls={currentLineup && (
+                <section className="card space-y-4" aria-labelledby="transfer-planner">
+                  <h2 id="transfer-planner" className="text-xl font-semibold">Compare transfers</h2>
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                    <p className="font-semibold">Keep squad · {formatPoints(currentLineup.startingXi.totalPredictedPoints)} projected pts</p>
+                    <p className="mt-1 text-sm text-slate-600">0 transfers, 0 points spent. This is the baseline for every comparison.</p>
+                  </div>
+                  <div className="flex flex-wrap items-end gap-3">
+                    <div className="min-w-28 text-sm font-semibold">
+                      <label htmlFor="plan-free-transfers">Free transfers</label>
+                      <select id="plan-free-transfers" className="input-field mt-1" value={freeTransfers} onChange={event => {
+                        clearTransfers();
+                        setFreeTransfers(event.target.value === '' ? '' : Number(event.target.value));
+                      }}>
+                        <option value="" disabled>Select</option>
+                        {[0, 1, 2, 3, 4, 5].map(value => <option key={value}>{value}</option>)}
+                      </select>
+                    </div>
+                    <div className="min-w-32 text-sm font-semibold">
+                      <label htmlFor="plan-max-hit">Maximum hit</label>
+                      <select id="plan-max-hit" className="input-field mt-1" value={hits} onChange={event => {
+                        clearTransfers();
+                        setHits(Number(event.target.value));
+                      }}>
+                        <option value="0">No hit</option><option value="1">4 points</option><option value="2">8 points</option>
+                      </select>
+                    </div>
+                    <button className="btn-primary" type="button" onClick={compare}
+                      disabled={loadingTransfers || freeTransfers === '' || !validFinances}>
+                      {loadingTransfers ? 'Comparing…' : 'Compare transfers'}
+                    </button>
+                  </div>
+                  {!validFinances && (
+                    <p className="text-sm text-amber-900">Enter a current bank balance and valid selling prices for all 15 players in <Link to="/squad" className="text-link">Edit squad</Link>.</p>
+                  )}
+                  <p className="text-sm text-slate-600">
+                    ScoutIQ compares up to two moves over this gameweek. {owned ? 'Costs use your confirmed selling prices.' : 'This draft uses market prices for both sales and purchases.'}
+                  </p>
+                  {transferError && <ErrorMessage message={transferError} action={{ label: 'Retry transfers', onClick: compare }} />}
+                </section>
+              )}
+            />
+            <details className="card">
+              <summary className="cursor-pointer font-semibold">Saved squad and season form</summary>
+              <div className="mt-3">
+                <p className="mb-2 text-sm text-slate-600">
+                  {owned && !bankConfirmed ? 'Bank unconfirmed' : `${formatPrice(analysis.bankLeft)} in the bank`}
+                </p>
+                <ul className="divide-y divide-slate-100">
+                  {analysis.results.map(({ player }, index) => (
+                    <li key={player.id} className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 py-2 text-sm">
+                      <Link className="text-link font-semibold" to={`/player/${player.id}`}>{player.name}</Link>
+                      <span className="text-slate-600">{index < 11 ? 'XI' : 'Bench'} · {player.pos} · {player.form.toFixed(1)} form</span>
+                    </li>
+                  ))}
+                </ul>
               </div>
-              <div className="text-sm text-gray-600">Average Score</div>
-            </div>
-            
-            <div className="card text-center">
-              <div className="text-3xl font-bold text-fpl-dark mb-2">
-                {formatScore(analysis.totalScore)}
-              </div>
-              <div className="text-sm text-gray-600">Total Score</div>
-            </div>
-            
-            <div className="card text-center">
-              <div className="text-3xl font-bold text-red-500 mb-2">
-                {analysis.flaggedPlayers}
-              </div>
-              <div className="text-sm text-gray-600">Flagged Players</div>
-            </div>
-            
-            <div className="card text-center">
-              <div className="text-3xl font-bold text-blue-500 mb-2">
-                {formatPrice(analysis.bankLeft)}
-              </div>
-              <div className="text-sm text-gray-600">Bank Remaining</div>
-            </div>
-          </div>
-
-          <OptimizerRecommendations
-            startingXi={optimizerState?.startingXi}
-            transferRecommendations={optimizerState?.transfers}
-            isLoading={isOptimizerLoading}
-            error={optimizerError}
-            contextNote="Transfer recommendations assume 1 free transfer and no points hits."
-            onRetry={() => setOptimizerRefreshKey(current => current + 1)}
-            targetGameweekId={optimizerState?.targetGameweekId}
-            predictionRunIds={optimizerState?.predictionRunIds}
-            emptyMessage="Prediction-backed recommendations will appear after optimizer data is available for this squad."
-          />
-
-          {/* Starting XI */}
-          <div className="card">
-            <h2 className="text-2xl font-semibold mb-6">
-              Starting XI ({getFormationString(startingXIResults.map(r => ({ pos: r.player.pos })))})
-            </h2>
-            <div className="space-y-3">
-              {startingXIResults.map((result) => (
-                <PlayerRow
-                  key={result.player.id}
-                  result={result}
-                />
-              ))}
-            </div>
-          </div>
-
-          {/* Bench */}
-          <div className="card">
-            <h2 className="text-2xl font-semibold mb-6">Bench</h2>
-            <div className="space-y-3">
-              {benchResults.map((result) => (
-                <PlayerRow
-                  key={result.player.id}
-                  result={result}
-                  isBench={true}
-                />
-              ))}
-            </div>
-          </div>
-
-          {/* Legend */}
-          <div className="card">
-            <h3 className="text-lg font-semibold mb-4">Legend</h3>
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-              <div className="flex items-center space-x-2">
-                <span className="badge bg-green-100 text-green-800 border-green-200">Perfect</span>
-                <span className="text-sm text-gray-600">Score &gt;= 8.0</span>
-              </div>
-              <div className="flex items-center space-x-2">
-                <span className="badge bg-blue-100 text-blue-800 border-blue-200">Good</span>
-                <span className="text-sm text-gray-600">Score &gt;= 6.0</span>
-              </div>
-              <div className="flex items-center space-x-2">
-                <span className="badge bg-yellow-100 text-yellow-800 border-yellow-200">Poor</span>
-                <span className="text-sm text-gray-600">Score &gt;= 4.0</span>
-              </div>
-              <div className="flex items-center space-x-2">
-                <span className="badge bg-red-100 text-red-800 border-red-200">Urgent</span>
-                <span className="text-sm text-gray-600">Score &lt; 4.0</span>
-              </div>
-              <div className="flex items-center space-x-2">
-                <span className="badge bg-red-900 text-red-100 border-red-800">Not Playing</span>
-                <span className="text-sm text-gray-600">Injured/Suspended</span>
-              </div>
-            </div>
-          </div>
-      </div>
+            </details>
+          </>
+        )}
     </div>
   );
-};
-
-export default AnalyzePage;
+}

@@ -67,8 +67,12 @@ export function createApp(): express.Express {
     }
   });
 
-  app.use('/api', rateLimit({ windowMs, limit: 100, standardHeaders: true, legacyHeaders: false, message: limitedResponse }));
-  app.use('/api', slowDown({ windowMs, delayAfter: 50, delayMs: () => 500, maxDelayMs: 20000 }));
+  // Per-address budget for all API calls. Reads are cached, so this is sized
+  // for a busy session or a few people behind one address, and the stricter
+  // limits below cover anything expensive.
+  const perAddress = readLimit(process.env.SCOUTIQ_RATE_LIMIT, 300, 'SCOUTIQ_RATE_LIMIT');
+  app.use('/api', rateLimit({ windowMs, limit: perAddress, standardHeaders: true, legacyHeaders: false, message: limitedResponse }));
+  app.use('/api', slowDown({ windowMs, delayAfter: Math.ceil(perAddress / 2), delayMs: used => Math.min(5000, (used - Math.ceil(perAddress / 2)) * 100), maxDelayMs: 5000 }));
 
   const limitPlanning = (limit = 10) => rateLimit({
     windowMs, limit, standardHeaders: true, legacyHeaders: false,

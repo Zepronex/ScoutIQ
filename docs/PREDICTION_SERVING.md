@@ -21,11 +21,11 @@ The prediction JSONL file is required. The model artifact and evaluation report 
 If the prediction file is missing, run the generation flow first:
 
 ```powershell
-pnpm.cmd run ingest:fpl:history
-pnpm.cmd run pipeline:features
-pnpm.cmd run model:train
-pnpm.cmd run model:backtest
-pnpm.cmd run model:predict
+pnpm run ingest:fpl:history
+pnpm run pipeline:features
+pnpm run model:train
+pnpm run model:backtest
+pnpm run model:predict
 ```
 
 ## Database Tables
@@ -52,19 +52,19 @@ Start Postgres, apply migrations, and load the normalized FPL snapshot before lo
 
 ```powershell
 docker compose up -d postgres
-pnpm.cmd run db:migrate
-pnpm.cmd run db:load:fpl
+pnpm run db:migrate
+pnpm run db:load:fpl
 ```
 
 Generate and load the Day 5 prediction outputs:
 
 ```powershell
-pnpm.cmd run ingest:fpl:history
-pnpm.cmd run pipeline:features
-pnpm.cmd run model:train
-pnpm.cmd run model:backtest
-pnpm.cmd run model:predict
-pnpm.cmd run db:load:predictions
+pnpm run ingest:fpl:history
+pnpm run pipeline:features
+pnpm run model:train
+pnpm run model:backtest
+pnpm run model:predict
+pnpm run db:load:predictions
 ```
 
 Windows wrapper:
@@ -76,7 +76,7 @@ Windows wrapper:
 Custom artifact paths:
 
 ```powershell
-pnpm.cmd run db:load:predictions -- --predictions data/predictions/expected_points_latest.jsonl --model data/models/expected_points_baseline.json --evaluation data/evaluation/expected_points_backtest.json
+pnpm run db:load:predictions -- --predictions data/predictions/expected_points_latest.jsonl --model data/models/expected_points_baseline.json --evaluation data/evaluation/expected_points_backtest.json
 .\scripts\load-predictions-db.ps1 -PredictionsPath data/predictions/expected_points_latest.jsonl -ModelPath data/models/expected_points_baseline.json -EvaluationPath data/evaluation/expected_points_backtest.json
 ```
 
@@ -185,15 +185,15 @@ Required local setup before using optimizer recommendations:
 
 ```powershell
 docker compose up -d postgres
-pnpm.cmd run db:migrate
-pnpm.cmd run db:load:fpl
-pnpm.cmd run ingest:fpl:history
-pnpm.cmd run pipeline:features
-pnpm.cmd run model:train
-pnpm.cmd run model:backtest
-pnpm.cmd run model:predict
-pnpm.cmd run db:load:predictions
-pnpm.cmd run dev:app
+pnpm run db:migrate
+pnpm run db:load:fpl
+pnpm run ingest:fpl:history
+pnpm run pipeline:features
+pnpm run model:train
+pnpm run model:backtest
+pnpm run model:predict
+pnpm run db:load:predictions
+pnpm run dev:app
 ```
 
 Current limitations:

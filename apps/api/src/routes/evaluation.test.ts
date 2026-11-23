@@ -104,7 +104,7 @@ describe('evaluation route', () => {
 
     assert.equal(response.status, 200);
     assert.equal(parsed.data.latestRun, null);
-    assert.ok(parsed.data.requiredCommands.includes('pnpm.cmd run model:backtest'));
+    assert.ok(parsed.data.requiredCommands.includes('pnpm run model:backtest'));
     assert.match(parsed.data.warnings.join(' '), /No model evaluation data is loaded/);
   });
 

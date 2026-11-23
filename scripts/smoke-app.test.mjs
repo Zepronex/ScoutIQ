@@ -45,7 +45,7 @@ describe('smoke app helpers', () => {
       data: {
         latestRun: null,
         latestPredictionRun: null,
-        requiredCommands: ['pnpm.cmd run model:backtest'],
+        requiredCommands: ['pnpm run model:backtest'],
         limitations: [],
         warnings: ['No model evaluation data is loaded.']
       }

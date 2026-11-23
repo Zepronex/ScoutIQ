@@ -115,11 +115,11 @@ const EvaluationReportSchema = z.object({
 }).passthrough();
 
 export const PREDICTION_ARTIFACT_COMMANDS = [
-  'pnpm.cmd run ingest:fpl:history',
-  'pnpm.cmd run pipeline:features',
-  'pnpm.cmd run model:train',
-  'pnpm.cmd run model:backtest',
-  'pnpm.cmd run model:predict'
+  'pnpm run ingest:fpl:history',
+  'pnpm run pipeline:features',
+  'pnpm run model:train',
+  'pnpm run model:backtest',
+  'pnpm run model:predict'
 ] as const;
 
 export function buildMissingPredictionArtifactsMessage(predictionFilePath: string): string {

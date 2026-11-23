@@ -24,8 +24,8 @@ The `data/` directory is gitignored. The manifest records source URLs, fetch tim
 After running migrations, the normalized output can be loaded into PostgreSQL:
 
 ```powershell
-pnpm.cmd run db:migrate
-pnpm.cmd run db:load:fpl
+pnpm run db:migrate
+pnpm run db:load:fpl
 ```
 
 The loader reads the normalized JSON files, records an ingestion run with source metadata and a deterministic snapshot hash, then upserts teams, players, gameweeks, and fixtures. See `docs/DATABASE.md` for the full local Postgres workflow and verification commands.
@@ -35,7 +35,7 @@ The loader reads the normalized JSON files, records an ingestion run with source
 From the repository root:
 
 ```powershell
-pnpm.cmd run ingest:fpl
+pnpm run ingest:fpl
 ```
 
 Windows PowerShell wrapper:
@@ -47,7 +47,7 @@ Windows PowerShell wrapper:
 Optional output and season:
 
 ```powershell
-pnpm.cmd run ingest:fpl -- --out data/fpl/2026-27 --season 2026-27
+pnpm run ingest:fpl -- --out data/fpl/2026-27 --season 2026-27
 .\scripts\ingest-fpl.ps1 -OutputDir data/fpl/2026-27 -Season 2026-27
 ```
 

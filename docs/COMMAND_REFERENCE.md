@@ -1,15 +1,15 @@
 # Command Reference
 
-Use these commands from the repository root. The examples use `pnpm.cmd` because this project is developed and reviewed primarily from Windows PowerShell.
+Use these commands from the repository root. The examples use `pnpm` because this project is developed and reviewed primarily from Windows PowerShell.
 
 ## Core Local App
 
 | Command | Purpose |
 | --- | --- |
-| `pnpm.cmd install` | Install workspace dependencies. |
-| `pnpm.cmd run dev:app` | Start the API and web app for normal local development and demos. |
-| `pnpm.cmd run dev:api` | Start only the API service. |
-| `pnpm.cmd run dev:web` | Start only the web app. |
+| `pnpm install` | Install workspace dependencies. |
+| `pnpm run dev:app` | Start the API and web app for normal local development and demos. |
+| `pnpm run dev:api` | Start only the API service. |
+| `pnpm run dev:web` | Start only the web app. |
 
 `dev:app` is the default command for ScoutIQ demo work. It starts the API and web app only and does not require an OpenAI API key.
 
@@ -17,8 +17,8 @@ Use these commands from the repository root. The examples use `pnpm.cmd` because
 
 | Command | Purpose |
 | --- | --- |
-| `pnpm.cmd run smoke:app` | Check a running local API and web app. |
-| `pnpm.cmd run test:smoke` | Run unit tests for the smoke-test helper script. |
+| `pnpm run smoke:app` | Check a running local API and web app. |
+| `pnpm run test:smoke` | Run unit tests for the smoke-test helper script. |
 
 `smoke:app` expects `dev:app` to already be running. It checks health, agent status, evaluation, home, evaluation page, and analyze page endpoints.
 
@@ -26,12 +26,12 @@ Use these commands from the repository root. The examples use `pnpm.cmd` because
 
 | Command | Purpose |
 | --- | --- |
-| `pnpm.cmd run build` | Build the API and web app workspaces. |
-| `pnpm.cmd run build:api` | Type-check and build the API. |
-| `pnpm.cmd run build:web` | Type-check and build the web app. |
-| `pnpm.cmd run test:api` | Run API unit and integration-style tests. |
-| `pnpm.cmd run pipeline:test` | Run Databricks/lakehouse pipeline tests. |
-| `pnpm.cmd run model:test` | Run expected-points model pipeline tests. |
+| `pnpm run build` | Build the API and web app workspaces. |
+| `pnpm run build:api` | Type-check and build the API. |
+| `pnpm run build:web` | Type-check and build the web app. |
+| `pnpm run test:api` | Run API unit and integration-style tests. |
+| `pnpm run pipeline:test` | Run Databricks/lakehouse pipeline tests. |
+| `pnpm run model:test` | Run expected-points model pipeline tests. |
 
 For documentation-only changes, `test:smoke` and `git diff --check` are usually enough before an intermediate commit. Before merging product or data-path changes, run the relevant build and test commands above.
 
@@ -44,14 +44,14 @@ CI runs without OpenAI or Azure OpenAI keys, local `.env` files, Docker, Postgre
 To reproduce the CI checks locally from Windows PowerShell:
 
 ```powershell
-pnpm.cmd install --frozen-lockfile
-pnpm.cmd run build
-pnpm.cmd run build:api
-pnpm.cmd run build:web
-pnpm.cmd run test:api
-pnpm.cmd run test:smoke
-pnpm.cmd run pipeline:test
-pnpm.cmd run model:test
+pnpm install --frozen-lockfile
+pnpm run build
+pnpm run build:api
+pnpm run build:web
+pnpm run test:api
+pnpm run test:smoke
+pnpm run pipeline:test
+pnpm run model:test
 ```
 
 ## Database And Ingestion
@@ -59,11 +59,11 @@ pnpm.cmd run model:test
 | Command | Purpose |
 | --- | --- |
 | `docker compose up -d postgres` | Start local PostgreSQL. |
-| `pnpm.cmd run db:migrate` | Apply database migrations from `db/migrations`. |
-| `pnpm.cmd run ingest:fpl` | Fetch and normalize public FPL bootstrap and fixture data. |
-| `pnpm.cmd run ingest:fpl:history` | Fetch public player gameweek history. |
-| `pnpm.cmd run db:load:fpl` | Load normalized FPL data into PostgreSQL. |
-| `pnpm.cmd run db:load:predictions` | Load generated prediction and evaluation artifacts into PostgreSQL. |
+| `pnpm run db:migrate` | Apply database migrations from `db/migrations`. |
+| `pnpm run ingest:fpl` | Fetch and normalize public FPL bootstrap and fixture data. |
+| `pnpm run ingest:fpl:history` | Fetch public player gameweek history. |
+| `pnpm run db:load:fpl` | Load normalized FPL data into PostgreSQL. |
+| `pnpm run db:load:predictions` | Load generated prediction and evaluation artifacts into PostgreSQL. |
 
 PowerShell wrappers are available in `scripts/` for migration, ingestion, and database load workflows.
 
@@ -73,36 +73,36 @@ Run this sequence when a reviewer needs a full local data refresh and prediction
 
 ```powershell
 docker compose up -d postgres
-pnpm.cmd run db:migrate
-pnpm.cmd run ingest:fpl
-pnpm.cmd run db:load:fpl
-pnpm.cmd run ingest:fpl:history
-pnpm.cmd run pipeline:features
-pnpm.cmd run model:train
-pnpm.cmd run model:backtest
-pnpm.cmd run model:predict
-pnpm.cmd run db:load:predictions
-pnpm.cmd run dev:app
+pnpm run db:migrate
+pnpm run ingest:fpl
+pnpm run db:load:fpl
+pnpm run ingest:fpl:history
+pnpm run pipeline:features
+pnpm run model:train
+pnpm run model:backtest
+pnpm run model:predict
+pnpm run db:load:predictions
+pnpm run dev:app
 ```
 
 Then verify from a second terminal:
 
 ```powershell
-pnpm.cmd run smoke:app
+pnpm run smoke:app
 ```
 
 ## Pipeline And Model Commands
 
 | Command | Purpose |
 | --- | --- |
-| `pnpm.cmd run pipeline:bronze` | Build source-preserving Bronze lakehouse rows. |
-| `pnpm.cmd run pipeline:silver` | Build typed Silver lakehouse rows. |
-| `pnpm.cmd run pipeline:gold` | Build feature-oriented Gold rows. |
-| `pnpm.cmd run pipeline:features` | Build expected-points feature and training rows. |
-| `pnpm.cmd run pipeline:all` | Run the lakehouse pipeline end to end. |
-| `pnpm.cmd run model:train` | Train the expected-points baseline model. |
-| `pnpm.cmd run model:backtest` | Run walk-forward expected-points backtesting. |
-| `pnpm.cmd run model:predict` | Generate prediction rows for serving. |
+| `pnpm run pipeline:bronze` | Build source-preserving Bronze lakehouse rows. |
+| `pnpm run pipeline:silver` | Build typed Silver lakehouse rows. |
+| `pnpm run pipeline:gold` | Build feature-oriented Gold rows. |
+| `pnpm run pipeline:features` | Build expected-points feature and training rows. |
+| `pnpm run pipeline:all` | Run the lakehouse pipeline end to end. |
+| `pnpm run model:train` | Train the expected-points baseline model. |
+| `pnpm run model:backtest` | Run walk-forward expected-points backtesting. |
+| `pnpm run model:predict` | Generate prediction rows for serving. |
 
 Generated feature, model, evaluation, and prediction artifacts are written under gitignored `data/` paths.
 

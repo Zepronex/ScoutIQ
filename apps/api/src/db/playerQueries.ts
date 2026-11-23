@@ -4,15 +4,15 @@ import { PlayerCandidate } from '../optimizer/types';
 
 export const PLAYER_CANDIDATE_REQUIRED_COMMANDS = [
   'docker compose up -d postgres',
-  'pnpm.cmd run db:migrate',
-  'pnpm.cmd run ingest:fpl',
-  'pnpm.cmd run db:load:fpl',
-  'pnpm.cmd run ingest:fpl:history',
-  'pnpm.cmd run pipeline:features',
-  'pnpm.cmd run model:train',
-  'pnpm.cmd run model:backtest',
-  'pnpm.cmd run model:predict',
-  'pnpm.cmd run db:load:predictions'
+  'pnpm run db:migrate',
+  'pnpm run ingest:fpl',
+  'pnpm run db:load:fpl',
+  'pnpm run ingest:fpl:history',
+  'pnpm run pipeline:features',
+  'pnpm run model:train',
+  'pnpm run model:backtest',
+  'pnpm run model:predict',
+  'pnpm run db:load:predictions'
 ];
 
 type PlayerCandidateDbRow = {

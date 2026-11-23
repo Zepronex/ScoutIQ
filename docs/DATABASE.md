@@ -22,7 +22,7 @@ postgresql://scoutiq:scoutiq@localhost:5432/scoutiq
 Apply schema migrations from the repository root:
 
 ```powershell
-pnpm.cmd run db:migrate
+pnpm run db:migrate
 ```
 
 Windows wrapper:
@@ -38,7 +38,7 @@ Migrations live in `db/migrations`. Applied files are tracked in `schema_migrati
 Refresh the normalized Day 2 FPL output:
 
 ```powershell
-pnpm.cmd run ingest:fpl
+pnpm run ingest:fpl
 ```
 
 Windows wrapper:
@@ -62,7 +62,7 @@ data/fpl/latest/fixtures.json
 Load the normalized JSON files into Postgres:
 
 ```powershell
-pnpm.cmd run db:load:fpl
+pnpm run db:load:fpl
 ```
 
 Windows wrapper:
@@ -74,7 +74,7 @@ Windows wrapper:
 To load a specific ingestion output directory:
 
 ```powershell
-pnpm.cmd run db:load:fpl -- --input data/fpl/2026-27
+pnpm run db:load:fpl -- --input data/fpl/2026-27
 .\scripts\load-fpl-db.ps1 -InputDir data/fpl/2026-27
 ```
 
@@ -100,7 +100,7 @@ model_evaluations
 The local Day 5 training and backtesting scripts still write artifacts under gitignored `data/` paths. Load those outputs into PostgreSQL with:
 
 ```powershell
-pnpm.cmd run db:load:predictions
+pnpm run db:load:predictions
 .\scripts\load-predictions-db.ps1
 ```
 

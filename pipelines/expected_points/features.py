@@ -132,7 +132,7 @@ def build_expected_points_feature_files(
         training_rows = []
         messages.append(
             f'No historical player-gameweek file found at {resolved_history_path}. '
-            'Run pnpm.cmd run ingest:fpl:history before training or backtesting.'
+            'Run pnpm run ingest:fpl:history before training or backtesting.'
         )
 
     return FeatureBuildResult(
@@ -590,7 +590,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         if not rows:
             print(
                 'No historical training rows were produced from snapshots. '
-                'Use pnpm.cmd run ingest:fpl:history and then pnpm.cmd run pipeline:features for official player history rows.'
+                'Use pnpm run ingest:fpl:history and then pnpm run pipeline:features for official player history rows.'
             )
         write_jsonl(output_path, rows)
     else:

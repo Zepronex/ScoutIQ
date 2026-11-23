@@ -1,23 +1,19 @@
-# Screenshot Assets
+# Screenshots
 
-This directory is reserved for real ScoutIQ screenshots captured from a local demo run.
+These images come from the running app with a real FPL snapshot. Regenerate them after a visible change:
 
-Do not add placeholder, generated, or mock screenshots. Only commit screenshots that show the running app with non-sensitive local data and no API keys, tokens, credentials, or private environment values visible.
+```sh
+pnpm run dev
+SCOUTIQ_WEB_URL=http://localhost:3000 node scripts/capture-screenshots.mjs
+```
 
-Current demo screenshots:
+Set `SCOUTIQ_BROWSER_CHANNEL=chrome` to use an installed Chrome. The script generates a fresh draft squad, so it needs current projections in the database and nothing saved in the browser.
 
-| File | Expected view |
+| File | View |
 | --- | --- |
-| `home.png` | Home or analysis entry page showing the local web app shell. |
-| `optimizer-result.png` | Team Analysis page after a complete squad analysis with optimizer recommendations visible. |
-| `top-players.png` | Top Players page showing prediction-backed player ranking output. |
-| `evaluation-dashboard.png` | Model Evaluation dashboard with baseline comparison and data-health context visible. |
-
-Optional future screenshots:
-
-| File | Expected view |
-| --- | --- |
-| `explanation-agent.png` | Recommendation explanation panel showing either deterministic fallback mode or live provider mode. |
-| `ci-green.png` | Optional GitHub Actions run screenshot showing the real CI workflow passing. |
-
-See [Screenshot Capture Guide](../../SCREENSHOTS.md) for the full capture flow, viewport recommendation, and review checklist.
+| `home.png` | Home page with the deadline countdown and top projections |
+| `squad-builder.png` | Squad builder after generating a £100.0m draft |
+| `gameweek-plan.png` | Recommended XI on the pitch, bench order and transfer comparison |
+| `gameweek-plan-phone.png` | The same plan at phone width |
+| `top-players.png` | Player projections table |
+| `model.png` | Backtest results against the benchmark |

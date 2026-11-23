@@ -1,0 +1,3 @@
+# Pages are public. The API serves the app and is not for crawling.
+User-agent: *
+Disallow: /api/

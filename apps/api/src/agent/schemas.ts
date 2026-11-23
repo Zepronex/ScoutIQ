@@ -160,7 +160,8 @@ export const AgentFallbackReasonCodeSchema = z.enum([
   'missing_provider_config',
   'provider_error',
   'schema_validation_failed',
-  'hallucination_guard_failed'
+  'hallucination_guard_failed',
+  'daily_limit_reached'
 ]);
 
 export const AgentExplanationStatusSchema = z.object({

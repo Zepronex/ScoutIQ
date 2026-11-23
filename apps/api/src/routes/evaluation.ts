@@ -1,7 +1,7 @@
 import { Router, Response, type Router as ExpressRouter } from 'express';
 import { z } from 'zod';
 import { getServerPool, Queryable } from '../db/client';
-import { readDatabaseConfig } from '../db/config';
+import { createTtlCache } from '../lib/guards';
 import {
   readEvaluationDataCoverage,
   readLatestModelEvaluation,
@@ -18,6 +18,7 @@ import {
 type EvaluationRouterOptions = {
   playerGameweekHistoryPath?: string;
   now?: () => Date;
+  cacheMs?: number;
 };
 
 const runsQuerySchema = z.object({
@@ -29,22 +30,23 @@ export function createEvaluationRouter(
   options: EvaluationRouterOptions = {}
 ): ExpressRouter {
   const router: ExpressRouter = Router();
-  const historyPath = options.playerGameweekHistoryPath ?? readDatabaseConfig().defaultFplHistoryPath;
+  // The history file is a local pipeline artifact. A deployed service has no
+  // copy, and parsing tens of megabytes per request would stall every other
+  // caller, so it is only read when a path is passed in explicitly.
+  const historyPath = options.playerGameweekHistoryPath;
+  const cache = createTtlCache<unknown>(options.cacheMs ?? 30_000);
 
   router.get('/latest', async (_req, res) => {
     try {
-      const [evaluation, latestPredictionRun] = await Promise.all([
-        readLatestModelEvaluation(client),
-        readLatestPredictionRun(client)
-      ]);
-
-      res.json({
-        success: true,
-        data: buildEvaluationLatest({
-          evaluation,
-          latestPredictionRun
-        })
+      const data = await cache.get('latest', async () => {
+        const [evaluation, latestPredictionRun] = await Promise.all([
+          readLatestModelEvaluation(client),
+          readLatestPredictionRun(client)
+        ]);
+        return buildEvaluationLatest({ evaluation, latestPredictionRun });
       });
+
+      res.json({ success: true, data });
     } catch (error) {
       handleRouteError(res, error);
     }
@@ -53,8 +55,8 @@ export function createEvaluationRouter(
   router.get('/runs', async (req, res) => {
     try {
       const query = runsQuerySchema.parse(req.query);
-      const evaluations = await readModelEvaluationRuns(client, { limit: query.limit });
-      const data = buildEvaluationRuns(evaluations);
+      const data = await cache.get(`runs:${query.limit}`, async () =>
+        buildEvaluationRuns(await readModelEvaluationRuns(client, { limit: query.limit }))) as ReturnType<typeof buildEvaluationRuns>;
 
       res.json({
         success: true,
@@ -68,21 +70,16 @@ export function createEvaluationRouter(
 
   router.get('/data-health', async (_req, res) => {
     try {
-      const [coverage, latestPredictionRun, historyArtifact] = await Promise.all([
-        readEvaluationDataCoverage(client),
-        readLatestPredictionRun(client),
-        readPlayerGameweekHistoryArtifact(historyPath)
-      ]);
-
-      res.json({
-        success: true,
-        data: buildEvaluationDataHealth({
-          coverage,
-          latestPredictionRun,
-          historyArtifact,
-          now: options.now?.()
-        })
+      const data = await cache.get('data-health', async () => {
+        const [coverage, latestPredictionRun, historyArtifact] = await Promise.all([
+          readEvaluationDataCoverage(client),
+          readLatestPredictionRun(client),
+          historyPath ? readPlayerGameweekHistoryArtifact(historyPath) : { artifact: null, warnings: [] }
+        ]);
+        return buildEvaluationDataHealth({ coverage, latestPredictionRun, historyArtifact, now: options.now?.() });
       });
+
+      res.json({ success: true, data });
     } catch (error) {
       handleRouteError(res, error);
     }

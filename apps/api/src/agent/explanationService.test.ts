@@ -21,6 +21,23 @@ describe('LLM recommendation explanation service', () => {
     assert.equal(explanation.agentStatus.fallbackReasonCode, 'agent_disabled');
   });
 
+  it('stops calling the provider once the daily budget is spent and caps output tokens', async () => {
+    const calls: Array<{ url: string; body: unknown }> = [];
+    const fetchImpl = jsonFetch(calls, { output_text: JSON.stringify(coreExplanationFixture()) });
+    let left = 1;
+    const budget = { tryConsume: () => left-- > 0 };
+    const options = { config: openAIConfigFixture(), fetchImpl, budget };
+
+    const first = await explainRecommendation(explanationInputFixture(), options);
+    const second = await explainRecommendation(explanationInputFixture(), options);
+
+    assert.equal(first.usedFallback, false);
+    assert.equal(second.usedFallback, true);
+    assert.equal(second.agentStatus.fallbackReasonCode, 'daily_limit_reached');
+    assert.equal(calls.length, 1);
+    assert.equal((calls[0].body as { max_output_tokens: number }).max_output_tokens, 1200);
+  });
+
   it('returns validated OpenAI structured output when configured', async () => {
     const calls: Array<{ url: string; body: unknown }> = [];
     const fetchImpl = jsonFetch(calls, {

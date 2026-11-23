@@ -67,6 +67,29 @@ it('distinguishes an unknown team ID from an existing team with no public picks'
   }
 });
 
+it('asks FPL once for repeated imports of the same team', async () => {
+  let calls = 0;
+  const app = express().use(express.json()).use('/entries', createEntriesRouter(client, async () => {
+    calls += 1;
+    return { picks };
+  }));
+  const server = app.listen(0, '127.0.0.1');
+  await new Promise<void>(resolve => server.once('listening', resolve));
+  try {
+    const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/entries/import`;
+    const post = (entryId: number) => fetch(url, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ entryId })
+    });
+    assert.equal((await post(7)).status, 200);
+    assert.equal((await post(7)).status, 200);
+    assert.equal(calls, 1);
+    assert.equal((await post(8)).status, 200);
+    assert.equal(calls, 2);
+  } finally {
+    await new Promise<void>(resolve => server.close(() => resolve()));
+  }
+});
+
 async function lookup(entryId: unknown, provider: (id: number, week: number) => Promise<unknown>) {
   const app = express().use(express.json()).use('/entries', createEntriesRouter(client, provider));
   const server = app.listen(0, '127.0.0.1');

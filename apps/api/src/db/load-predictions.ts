@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { createDbPool, withTransaction } from './client';
 import { readDatabaseConfig } from './config';
+import { readLimit } from '../lib/guards';
 import { buildFplLoadPlan } from './fplLoadPlan';
 import { loadFplLoadPlan, readNormalizedFplDataset } from './fplLoader';
 import { buildPredictionLoadPlanFromFiles, loadPredictionArtifacts, loadPredictionLoadPlan } from './predictionLoader';
@@ -75,7 +76,17 @@ async function publishSnapshot(pool: ReturnType<typeof createDbPool>, inputDir: 
     );
     if (newer.rows.length) throw new Error('A newer FPL snapshot is already loaded.');
     await loadFplLoadPlan(client, fpl);
-    return loadPredictionLoadPlan(client, predictions);
+    const result = await loadPredictionLoadPlan(client, predictions);
+    // Each refresh adds a run of roughly 700 rows. Only the newest runs are
+    // ever served, so older ones are dropped to keep the database small.
+    const kept = Math.max(1, readLimit(process.env.SCOUTIQ_PREDICTION_RUNS_KEPT, 30, 'SCOUTIQ_PREDICTION_RUNS_KEPT'));
+    await client.query(
+      `DELETE FROM prediction_runs WHERE id NOT IN (
+         SELECT id FROM prediction_runs ORDER BY created_at DESC, id DESC LIMIT $1
+       )`,
+      [kept]
+    );
+    return result;
   });
 }
 

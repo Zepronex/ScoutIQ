@@ -1,24 +1,15 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import {
-  AlertTriangle,
-  ArrowRight,
-  CheckCircle2,
-  Coins,
-  FileText,
-  RefreshCw,
-  ShieldCheck,
-  Trophy,
-  Users
-} from 'lucide-react';
+import { ArrowRight } from 'lucide-react';
 import {
   ConstraintValidationResult,
-  OptimizerSquadSlot,
   RecommendationExplanation,
   StartingXIRecommendation,
   TransferRecommendation
 } from '../lib/types';
-import { formatPoints, formatPrice, getPositionColor, predictionAvailability } from '../lib/format';
+import { formatPoints, formatPrice, formatSigned, formatXp } from '../lib/format';
+import ErrorMessage from './ErrorMessage';
 import LoadingSpinner from './LoadingSpinner';
+import Pitch from './Pitch';
 import { apiClient, apiErrorMessage } from '../lib/api';
 
 type OptimizerRecommendationsProps = {
@@ -31,19 +22,14 @@ type OptimizerRecommendationsProps = {
   onRetry?: () => void;
   targetGameweekId?: number;
   predictionRunIds?: number[];
+  /** Gameweek fixtures by player id, shown on the pitch. */
+  fixtures?: ReadonlyMap<number, string[]>;
 };
 
-const OptimizerRecommendations = ({
-  startingXi,
-  transferRecommendations,
-  transferControls,
-  isLoading,
-  error,
-  emptyMessage,
-  onRetry,
-  targetGameweekId,
-  predictionRunIds
-}: OptimizerRecommendationsProps) => {
+export default function OptimizerRecommendations({
+  startingXi, transferRecommendations, transferControls, isLoading, error, emptyMessage, onRetry,
+  targetGameweekId, predictionRunIds, fixtures
+}: OptimizerRecommendationsProps) {
   const [explanation, setExplanation] = useState<RecommendationExplanation | null>(null);
   const [explanationError, setExplanationError] = useState<string | null>(null);
   const [explaining, setExplaining] = useState(false);
@@ -85,536 +71,209 @@ const OptimizerRecommendations = ({
     }
   };
 
-  if (isLoading) return <section className="card"><LoadingSpinner text="Calculating the lineup…" /></section>;
-  if (error) return <StatusPanel tone="error" title="Lineup unavailable" message={error}
+  if (isLoading) return <LoadingSpinner text="Calculating the lineup…" />;
+  if (error) return <ErrorMessage title="Lineup unavailable" message={error}
     action={onRetry ? { label: 'Retry lineup', onClick: onRetry } : undefined} />;
-  if (!startingXi) return <StatusPanel tone="info" title="No lineup projection" message={emptyMessage} />;
+  if (!startingXi) return <ErrorMessage type="info" title="No lineup projection" message={emptyMessage} />;
 
   return (
-    <section className="space-y-5">
-      <StartingXiSection recommendation={startingXi} />
+    <div className="space-y-12">
+      <StartingXiSection recommendation={startingXi} fixtures={fixtures} />
       {transferControls}
       {transferRecommendations && (
-        transferRecommendations.length > 0 ? <TransfersSection recommendations={transferRecommendations}
-          beforePoints={startingXi.totalPredictedPoints} /> : <StatusPanel tone="info" title="Keep your squad this gameweek"
-          message="No transfer within your settings improves the projected lineup after points hits." />
+        transferRecommendations.length > 0
+          ? <TransfersSection recommendations={transferRecommendations} beforePoints={startingXi.totalPredictedPoints} />
+          : <ErrorMessage type="info" title="Keep your squad this gameweek"
+            message="No transfer within your settings improves the projected lineup after points hits." />
       )}
-      {explaining || explanation || explanationError
-        ? <ExplanationPanel explanation={explanation} isLoading={explaining} error={explanationError} onRetry={explain} />
-        : <button className="btn-secondary" type="button" onClick={explain}>Explain this plan</button>}
-    </section>
-  );
-};
-
-type StatusTone = 'error' | 'warning' | 'info';
-
-type StatusPanelProps = {
-  tone: StatusTone;
-  title: string;
-  message: string;
-  action?: {
-    label: string;
-    onClick: () => void;
-  };
-};
-
-const StatusPanel = ({ tone, title, message, action }: StatusPanelProps) => {
-  const toneClass = {
-    error: 'border-red-200 bg-red-50 text-red-800',
-    warning: 'border-yellow-200 bg-yellow-50 text-yellow-800',
-    info: 'border-blue-200 bg-blue-50 text-blue-800'
-  }[tone];
-
-  return (
-    <section className={`rounded-lg border p-5 ${toneClass}`}>
-      <div className="flex items-start gap-3">
-        <AlertTriangle className="mt-0.5 h-5 w-5 flex-shrink-0" />
-        <div>
-          <h3 className="font-semibold">{title}</h3>
-          <p className="mt-1 text-sm">{message}</p>
-          {action && (
-            <button
-              onClick={action.onClick}
-              className="mt-3 inline-flex items-center rounded-md border border-current bg-white px-3 py-1.5 text-sm font-medium hover:bg-gray-50"
-            >
-              <RefreshCw className="mr-1 h-4 w-4" />
-              {action.label}
-            </button>
+      <section aria-label="Explanation">
+        {explaining ? <LoadingSpinner text="Writing the explanation…" />
+          : explanationError ? <ErrorMessage type="warning" title="Explanation unavailable" message={explanationError}
+            action={{ label: 'Retry explanation', onClick: explain }} />
+          : explanation ? <ExplanationPanel explanation={explanation} />
+          : (
+            <div className="flex flex-wrap items-center gap-x-5 gap-y-3 border-t border-line pt-6">
+              <button className="btn-secondary" type="button" onClick={explain}>Explain this plan</button>
+              <p className="text-sm text-ink-soft">A written summary of the lineup, captaincy and transfer reasoning.</p>
+            </div>
           )}
-        </div>
-      </div>
-    </section>
-  );
-};
-
-type ExplanationPanelProps = {
-  explanation: RecommendationExplanation | null;
-  isLoading: boolean;
-  error: string | null;
-  onRetry: () => void;
-};
-
-const ExplanationPanel = ({ explanation, isLoading, error, onRetry }: ExplanationPanelProps) => {
-  if (isLoading) {
-    return (
-      <section className="rounded-lg border border-gray-200 bg-white p-6">
-        <LoadingSpinner text="Preparing recommendation explanation..." />
-        <p className="mt-3 text-center text-sm text-gray-600">
-          The optimizer result has already been produced; this step only prepares explanatory text.
-        </p>
       </section>
-    );
-  }
-
-  if (error) {
-    return (
-      <StatusPanel
-        tone="warning"
-        title="Explanation unavailable"
-        message={error}
-        action={{ label: 'Retry explanation', onClick: onRetry }}
-      />
-    );
-  }
-
-  if (!explanation) {
-    return (
-      <StatusPanel
-        tone="info"
-        title="Explanation pending"
-        message="An explanation will appear after the optimizer returns a recommendation payload."
-        action={{ label: 'Retry explanation', onClick: onRetry }}
-      />
-    );
-  }
-
-  const modeLabel = formatAgentModeLabel(explanation);
-  const fallbackMessage = explanation.fallbackReason ?? explanation.agentStatus.message;
-
-  return (
-    <section className="rounded-lg border border-gray-200 bg-white p-5">
-      <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div className="flex items-start gap-3">
-          <div className="rounded-md bg-gray-100 p-2 text-gray-700">
-            <FileText className="h-5 w-5" />
-          </div>
-          <div>
-            <h3 className="text-xl font-semibold text-fpl-dark">Recommendation explanation</h3>
-            <p className="mt-1 text-sm text-gray-600">{explanation.summary}</p>
-          </div>
-        </div>
-        <div className="w-fit rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700">
-          <div className="text-xs font-semibold uppercase text-gray-500">Explanation mode</div>
-          <div className="font-medium text-gray-900">{modeLabel}</div>
-          <div className="mt-1 max-w-xs text-xs text-gray-600">{explanation.agentStatus.message}</div>
-        </div>
-      </div>
-
-      {explanation.agentStatus.mode === 'deterministic_fallback' && (
-        <div className="mb-5 rounded-md border border-yellow-200 bg-yellow-50 p-3 text-sm text-yellow-900">
-          <p>{fallbackMessage}</p>
-          <p className="mt-2">
-            Recommendations remain valid because the optimizer selected the players, transfers, captaincy and bench order before this explanation was generated.
-          </p>
-        </div>
-      )}
-
-      <div className="grid gap-4 lg:grid-cols-2">
-        <ExplanationSection title="Recommended actions" items={explanation.recommendedActions} />
-        <ExplanationSection title="Starting XI reasoning" items={explanation.startingXiReasoning} />
-        <ExplanationSection title="Captaincy reasoning" items={explanation.captaincyReasoning} />
-        <ExplanationSection title="Transfer reasoning" items={explanation.transferReasoning} />
-        <ExplanationSection title="Risks" items={explanation.risks} />
-        <ExplanationSection title="Alternatives" items={explanation.alternatives} />
-        <ExplanationSection title="Data notes" items={explanation.dataLimitations} />
-        <ExplanationSection title="Rule-check details" items={explanation.constraintSummary} />
-      </div>
-
-      <div className="mt-5 rounded-md border border-gray-200 bg-gray-50 p-4">
-        <div className="flex items-start gap-3">
-          <ShieldCheck className="mt-0.5 h-5 w-5 flex-shrink-0 text-green-700" />
-          <div>
-            <h4 className="text-sm font-semibold text-gray-900">Why this is safe</h4>
-            <p className="mt-1 text-sm text-gray-600">
-              The optimizer decides the recommendation. The agent only explains the supplied optimizer output, and live provider responses must pass schema validation and grounding checks before display. If those checks fail, deterministic fallback is used.
-            </p>
-          </div>
-        </div>
-      </div>
-
-      <p className="mt-5 border-t border-gray-200 pt-4 text-sm text-gray-600">
-        {explanation.disclaimer}
-      </p>
-    </section>
-  );
-};
-
-const formatAgentModeLabel = (explanation: RecommendationExplanation): string => {
-  if (explanation.agentStatus.mode === 'deterministic_fallback') {
-    return 'Deterministic fallback';
-  }
-
-  return `${formatProviderName(explanation.agentStatus.provider)} provider`;
-};
-
-const formatProviderName = (provider: RecommendationExplanation['agentStatus']['provider']): string => {
-  switch (provider) {
-    case 'openai':
-      return 'OpenAI';
-    case 'azure_openai':
-      return 'Azure OpenAI';
-    case 'deterministic_fallback':
-      return 'Deterministic fallback';
-  }
-};
-
-type ExplanationSectionProps = {
-  title: string;
-  items: string[];
-};
-
-const ExplanationSection = ({ title, items }: ExplanationSectionProps) => {
-  if (items.length === 0) return null;
-
-  return (
-    <div className="rounded-md border border-gray-100 bg-gray-50 p-4">
-      <h4 className="text-sm font-semibold text-gray-900">{title}</h4>
-      <ul className="mt-3 space-y-2 text-sm text-gray-700">
-        {items.map((item, index) => (
-          <li key={`${title}-${index}`} className="flex gap-2">
-            <span className="mt-2 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-gray-400" />
-            <span>{item}</span>
-          </li>
-        ))}
-      </ul>
     </div>
   );
-};
+}
 
-type StartingXiSectionProps = {
-  recommendation: StartingXIRecommendation;
-};
-
-const StartingXiSection = ({ recommendation }: StartingXiSectionProps) => {
-  const unavailablePlayers = [...recommendation.starters, ...recommendation.bench]
+function StartingXiSection({ recommendation, fixtures }: {
+  recommendation: StartingXIRecommendation; fixtures?: ReadonlyMap<number, string[]>;
+}) {
+  const { captaincy } = recommendation;
+  const flagged = [...recommendation.starters, ...recommendation.bench]
     .filter(player => player.availability === 'doubtful' || player.availability === 'unavailable');
 
   return (
-    <div className="rounded-lg border border-gray-200 bg-white p-5">
-      <div className="mb-5 grid gap-4 sm:grid-cols-3">
-        <MetricTile
-          icon={<Users className="h-5 w-5" />}
-          label="Formation"
-          value={recommendation.formation}
-        />
-        <MetricTile
-          icon={<Trophy className="h-5 w-5" />}
-          label="Projected points (captain ×2)"
-          value={formatPoints(recommendation.totalPredictedPoints)}
-        />
-        <MetricTile
-          icon={<ShieldCheck className="h-5 w-5" />}
-          label="Rule checks"
-          value={recommendation.constraintSummary.valid ? 'Valid' : 'Invalid'}
-          tone={recommendation.constraintSummary.valid ? 'success' : 'warning'}
-        />
+    <section aria-labelledby="starting-xi">
+      <div className="rule-heading">
+        <h2 id="starting-xi" className="section-title">Recommended starting XI</h2>
+        <RuleCheck validation={recommendation.constraintSummary} />
       </div>
-
-      <CaptaincyPanel recommendation={recommendation} />
-
-      {unavailablePlayers.length > 0 && (
-        <StatusPanel
-          tone="warning"
-          title="Availability warning"
-          message={`${unavailablePlayers.length} recommended player(s) are marked doubtful or unavailable in the prediction data.`}
-        />
-      )}
-
-      <div className="mt-5 grid gap-5 lg:grid-cols-3">
-        <div className="lg:col-span-2">
-          <div className="mb-3 flex items-center justify-between">
-            <h3 className="font-semibold text-gray-900">Recommended starting XI</h3>
-            <span className="text-sm text-gray-500">{recommendation.starters.length} players</span>
-          </div>
-          <div className="space-y-2">
-            {recommendation.starters.map(player => (
-              <PlayerProjectionRow
-                key={player.playerId}
-                player={player}
-              />
-            ))}
-          </div>
+      <dl className="grid grid-cols-2 gap-x-6 gap-y-5 py-5 sm:grid-cols-4">
+        <Stat label="Projected points" value={formatPoints(recommendation.totalPredictedPoints)} note="captain counted twice" large />
+        <Stat label="Formation" value={recommendation.formation} large />
+        <Stat label="Captain" value={captaincy.captain.shortName ?? captaincy.captain.playerName}
+          note={`${formatXp(captaincy.captainPredictedPoints)} projected`} />
+        <Stat label="Vice-captain" value={captaincy.viceCaptain.shortName ?? captaincy.viceCaptain.playerName}
+          note={`${formatXp(captaincy.viceCaptainPredictedPoints)} projected`} />
+      </dl>
+      {flagged.length > 0 && (
+        <div className="notice notice-warning mb-5">
+          <p><span className="font-semibold">Check availability.</span> {flagged.map(player => player.shortName ?? player.playerName).join(', ')}
+            {flagged.length === 1 ? ' is' : ' are'} flagged as doubtful or unavailable in the FPL data.</p>
         </div>
-
-        <div>
-          <div className="mb-3 flex items-center justify-between">
-            <h3 className="font-semibold text-gray-900">Bench order</h3>
-            <span className="text-sm text-gray-500">{recommendation.bench.length} players</span>
-          </div>
-          <div className="space-y-2">
-            {recommendation.bench.map((player, index) => (
-              <PlayerProjectionRow
-                key={player.playerId}
-                player={player}
-                prefix={player.position === 'GK' ? 'GK' : String(index + 1)}
-              />
-            ))}
-          </div>
-        </div>
-      </div>
-
-      <ConstraintSummary validation={recommendation.constraintSummary} />
-    </div>
-  );
-};
-
-type MetricTileProps = {
-  icon: ReactNode;
-  label: string;
-  value: string;
-  tone?: 'default' | 'success' | 'warning';
-};
-
-const MetricTile = ({ icon, label, value, tone = 'default' }: MetricTileProps) => {
-  const toneClass = {
-    default: 'bg-gray-50 text-fpl-dark',
-    success: 'bg-green-50 text-green-700',
-    warning: 'bg-yellow-50 text-yellow-700'
-  }[tone];
-
-  return (
-    <div className={`rounded-lg border border-gray-200 p-4 ${toneClass}`}>
-      <div className="mb-2 flex items-center gap-2 text-sm font-medium">
-        {icon}
-        <span>{label}</span>
-      </div>
-      <div className="text-2xl font-bold">{value}</div>
-    </div>
-  );
-};
-
-type CaptaincyPanelProps = {
-  recommendation: StartingXIRecommendation;
-};
-
-const CaptaincyPanel = ({ recommendation }: CaptaincyPanelProps) => {
-  const { captaincy } = recommendation;
-
-  return (
-    <div className="mb-5 grid gap-3 sm:grid-cols-2">
-      <CaptaincyPlayer
-        label="Captain"
-        badge="C"
-        player={captaincy.captain}
-        points={captaincy.captainPredictedPoints}
-      />
-      <CaptaincyPlayer
-        label="Vice captain"
-        badge="VC"
-        player={captaincy.viceCaptain}
-        points={captaincy.viceCaptainPredictedPoints}
-      />
-    </div>
-  );
-};
-
-type CaptaincyPlayerProps = {
-  label: string;
-  badge: string;
-  player: OptimizerSquadSlot;
-  points: number;
-};
-
-const CaptaincyPlayer = ({ label, badge, player, points }: CaptaincyPlayerProps) => (
-  <div className="rounded-lg border border-green-200 bg-green-50 p-4">
-    <div className="mb-2 flex items-center justify-between">
-      <span className="text-sm font-medium text-green-800">{label}</span>
-      <span className="rounded-full bg-green-700 px-2 py-1 text-xs font-bold text-white">{badge}</span>
-    </div>
-    <div className="font-semibold text-gray-900">{player.playerName}</div>
-    <div className="mt-1 text-sm text-gray-600">
-      {player.position} - {formatPoints(points)} projected points
-    </div>
-  </div>
-);
-
-type PlayerProjectionRowProps = {
-  player: OptimizerSquadSlot;
-  prefix?: string;
-};
-
-const PlayerProjectionRow = ({ player, prefix }: PlayerProjectionRowProps) => (
-  <div className="flex items-center gap-3 rounded-md border border-gray-100 bg-gray-50 px-3 py-2">
-    {prefix && (
-      <span className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-white text-xs font-semibold text-gray-600">
-        {prefix}
-      </span>
-    )}
-    <span className={`rounded px-2 py-1 text-xs font-semibold ${getPositionColor(player.position)}`}>
-      {player.position}
-    </span>
-    <div className="min-w-0 flex-1">
-      <div className="break-words font-medium text-gray-900">{player.playerName}</div>
-      <div className="text-xs text-gray-600">
-        {player.teamShortName || player.teamName || 'Team unknown'} · {formatPrice(player.price)} · {predictionAvailability(player)}
-      </div>
-    </div>
-    <div className="text-right">
-      <div className="font-semibold text-fpl-dark">{formatPoints(player.predictedPoints)}</div>
-      <div className="text-xs text-gray-500">pts</div>
-    </div>
-  </div>
-);
-
-type ConstraintSummaryProps = {
-  validation: ConstraintValidationResult;
-};
-
-const ConstraintSummary = ({ validation }: ConstraintSummaryProps) => (
-  <div className="mt-5 rounded-lg border border-gray-200 bg-gray-50 p-4">
-    <div className="flex items-center gap-2">
-      {validation.valid ? (
-        <CheckCircle2 className="h-5 w-5 text-green-600" />
-      ) : (
-        <AlertTriangle className="h-5 w-5 text-yellow-600" />
       )}
-      <h3 className="font-semibold text-gray-900">Rule validation</h3>
+      <Pitch starters={recommendation.starters} bench={recommendation.bench} fixtures={fixtures}
+        captainId={captaincy.captain.playerId} viceCaptainId={captaincy.viceCaptain.playerId} />
+      <RuleViolations validation={recommendation.constraintSummary} />
+    </section>
+  );
+}
+
+function Stat({ label, value, note, large }: { label: string; value: string; note?: string; large?: boolean }) {
+  return (
+    <div className="min-w-0">
+      <dt className="eyebrow">{label}</dt>
+      <dd className={`figure mt-2 truncate leading-none ${large ? 'text-4xl' : 'text-2xl sm:text-[1.7rem]'}`}>{value}</dd>
+      {note && <dd className="mt-1.5 text-[13px] text-ink-soft">{note}</dd>}
     </div>
-    <p className="mt-1 text-sm text-gray-600">
-      {validation.valid
-        ? `All ${validation.checks.length} optimizer checks passed.`
-        : `${validation.violations.length} rule issue(s) need attention.`}
-    </p>
-    {!validation.valid && (
-      <ul className="mt-3 space-y-2 text-sm text-gray-700">
+  );
+}
+
+function RuleCheck({ validation }: { validation: ConstraintValidationResult }) {
+  return validation.valid
+    ? <span className="shrink-0 text-[13px] text-ink-soft">Passes all {validation.checks.length} squad rules</span>
+    : <span className="shrink-0 text-[13px] font-semibold text-clay">{validation.violations.length} rule {validation.violations.length === 1 ? 'issue' : 'issues'}</span>;
+}
+
+function RuleViolations({ validation }: { validation: ConstraintValidationResult }) {
+  if (validation.valid) return null;
+  return (
+    <div className="notice notice-error mt-4">
+      <p className="font-semibold">This lineup breaks an FPL rule</p>
+      <ul className="mt-1 list-disc space-y-0.5 pl-5">
         {validation.violations.slice(0, 3).map(violation => (
-          <li key={`${violation.code}-${violation.key}`} className="rounded border border-yellow-200 bg-white p-2">
-            <span className="font-medium">{humanizeKey(violation.key)}:</span>{' '}
-            expected {formatConstraintValue(violation.expected)}, got {formatConstraintValue(violation.actual)}
+          <li key={`${violation.code}-${violation.key}`}>
+            {humanizeKey(violation.key)}: expected {formatConstraintValue(violation.expected)}, got {formatConstraintValue(violation.actual)}
           </li>
         ))}
       </ul>
-    )}
-  </div>
-);
+    </div>
+  );
+}
 
-type TransfersSectionProps = {
-  recommendations: TransferRecommendation[];
-  beforePoints: number;
-};
-
-const TransfersSection = ({ recommendations, beforePoints }: TransfersSectionProps) => (
-  <div className="rounded-lg border border-gray-200 bg-white p-5">
-    <div className="mb-4 flex items-center justify-between">
-      <div>
-        <h3 className="text-xl font-semibold text-fpl-dark">Recommended transfer options</h3>
-        <p className="text-sm text-gray-600">Ranked by net projected points gain.</p>
+function TransfersSection({ recommendations, beforePoints }: { recommendations: TransferRecommendation[]; beforePoints: number }) {
+  const ranked = [...recommendations].sort((a, b) => b.netExpectedPointsGain - a.netExpectedPointsGain || a.transferCount - b.transferCount);
+  return (
+    <section aria-labelledby="transfer-options">
+      <div className="rule-heading">
+        <h2 id="transfer-options" className="section-title">Recommended transfer options</h2>
+        <span className="shrink-0 text-[13px] text-ink-soft">Ranked by net gain</span>
       </div>
-      <Coins className="h-6 w-6 text-fpl-green" />
+      <ol>
+        {ranked.map((recommendation, index) => (
+          <li key={recommendation.moves.map(move => `${move.playerOut.playerId}-${move.playerIn.playerId}`).join('|')}
+            className="grid gap-x-8 gap-y-4 border-b border-line py-5 md:grid-cols-[9rem_minmax(0,1fr)]">
+            <div>
+              <p className="eyebrow">{index === 0 ? 'Best option' : `Option ${index + 1}`}</p>
+              <p className={`figure mt-2 text-4xl leading-none ${recommendation.netExpectedPointsGain > 0 ? 'text-pitch-turf' : 'text-ink'}`}>
+                {formatSigned(recommendation.netExpectedPointsGain)}
+              </p>
+              <p className="mt-1.5 text-[13px] text-ink-soft">
+                net points, {recommendation.transferCount} {recommendation.transferCount === 1 ? 'transfer' : 'transfers'}
+              </p>
+            </div>
+            <div className="min-w-0">
+              <ul className="space-y-2">
+                {recommendation.moves.map(move => (
+                  <li key={`${move.playerOut.playerId}-${move.playerIn.playerId}`}
+                    className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-3">
+                    <TransferPlayer label="Sell" name={move.playerOut.playerName} points={move.playerOut.predictedPoints}
+                      price={move.playerOut.sellingPrice ?? move.playerOut.price} />
+                    <ArrowRight className="h-4 w-4 text-ink-faint" aria-hidden="true" />
+                    <TransferPlayer label="Buy" name={move.playerIn.playerName} points={move.playerIn.predictedPoints} price={move.playerIn.price} />
+                  </li>
+                ))}
+              </ul>
+              <dl className="mt-4 flex flex-wrap gap-x-6 gap-y-1 text-[13px] text-ink-soft">
+                <Fact label="Gain before hit" value={formatSigned(recommendation.expectedPointsGain)} />
+                <Fact label="Points hit" value={recommendation.pointsHit ? `−${recommendation.pointsHit}` : 'None'} />
+                <Fact label="Bank after" value={formatPrice(recommendation.bankAfterTransfers)} />
+                <Fact label="Projected XI" value={`${formatPoints(beforePoints)} → ${formatPoints(recommendation.startingXi.totalPredictedPoints)}`} />
+              </dl>
+              <RuleViolations validation={recommendation.validation} />
+            </div>
+          </li>
+        ))}
+      </ol>
+    </section>
+  );
+}
+
+function Fact({ label, value }: { label: string; value: string }) {
+  return <div className="flex gap-1.5"><dt>{label}</dt><dd className="font-semibold tabular-nums text-ink">{value}</dd></div>;
+}
+
+function TransferPlayer({ label, name, points, price }: { label: string; name: string; points: number; price: number }) {
+  return (
+    <div className="min-w-0">
+      <p className="eyebrow">{label}</p>
+      <p className="mt-1 truncate font-semibold" title={name}>{name}</p>
+      <p className="text-[13px] tabular-nums text-ink-soft">{formatXp(points)} pts · {formatPrice(price)}</p>
     </div>
+  );
+}
 
-    <div className="space-y-4">
-      {[...recommendations].sort((a, b) => b.netExpectedPointsGain - a.netExpectedPointsGain || a.transferCount - b.transferCount).map(recommendation => (
-        <TransferOption
-          key={recommendation.moves.map(move => `${move.playerOut.playerId}-${move.playerIn.playerId}`).join('|')}
-          recommendation={recommendation}
-          beforePoints={beforePoints}
-        />
-      ))}
-    </div>
-  </div>
-);
-
-type TransferOptionProps = {
-  recommendation: TransferRecommendation;
-  beforePoints: number;
-};
-
-const TransferOption = ({ recommendation, beforePoints }: TransferOptionProps) => (
-  <div className="rounded-lg border border-gray-200 bg-gray-50 p-4">
-    <div className="mb-4 grid gap-3 sm:grid-cols-4">
-      <TransferMetric label="Transfers" value={`${recommendation.transferCount}`} />
-      <TransferMetric label="Expected gain" value={signedPoints(recommendation.expectedPointsGain)} />
-      <TransferMetric label="Net gain" value={signedPoints(recommendation.netExpectedPointsGain)} />
-      <TransferMetric label="Bank after" value={formatPrice(recommendation.bankAfterTransfers)} />
-    </div>
-
-    <div className="space-y-3">
-      {recommendation.moves.map(move => (
-        <div
-          key={`${move.playerOut.playerId}-${move.playerIn.playerId}`}
-          className="grid gap-3 rounded-md bg-white p-3 sm:grid-cols-[1fr_auto_1fr]"
-        >
-          <TransferPlayer label="Sell" name={move.playerOut.playerName} points={move.playerOut.predictedPoints} price={move.playerOut.sellingPrice ?? move.playerOut.price} />
-          <div className="flex items-center justify-center text-gray-400">
-            <ArrowRight className="h-5 w-5" />
+function ExplanationPanel({ explanation }: { explanation: RecommendationExplanation }) {
+  const fromProvider = explanation.agentStatus.mode === 'live_provider';
+  const sections: Array<[string, string[]]> = [
+    ['Recommended actions', explanation.recommendedActions],
+    ['Starting XI', explanation.startingXiReasoning],
+    ['Captaincy', explanation.captaincyReasoning],
+    ['Transfers', explanation.transferReasoning],
+    ['Risks', explanation.risks],
+    ['Alternatives', explanation.alternatives],
+    ['Data notes', explanation.dataLimitations],
+    ['Rule checks', explanation.constraintSummary]
+  ];
+  return (
+    <section aria-labelledby="explanation-title">
+      <div className="rule-heading">
+        <h2 id="explanation-title" className="section-title">Recommendation explanation</h2>
+      </div>
+      <p className="mt-4 max-w-3xl text-base leading-relaxed">{explanation.summary}</p>
+      <div className="mt-6 grid gap-x-12 gap-y-7 md:grid-cols-2">
+        {sections.filter(([, items]) => items.length > 0).map(([title, items]) => (
+          <div key={title}>
+            <h3 className="eyebrow border-b border-line pb-2">{title}</h3>
+            <ul className="mt-3 space-y-2 text-sm leading-relaxed text-ink-soft">
+              {items.map((item, index) => <li key={index} className="border-l-2 border-line pl-3">{item}</li>)}
+            </ul>
           </div>
-          <TransferPlayer label="Buy" name={move.playerIn.playerName} points={move.playerIn.predictedPoints} price={move.playerIn.price} />
-        </div>
-      ))}
-    </div>
-
-    <div className="mt-4 grid gap-2 text-sm text-gray-600 sm:grid-cols-3">
-      <span>Points hit: {recommendation.pointsHit}</span>
-      <span>Budget impact: {formatMoneyDelta(recommendation.budgetImpact)}</span>
-      <span>Projected XI {formatPoints(beforePoints)} → {formatPoints(recommendation.startingXi.totalPredictedPoints)} pts</span>
-    </div>
-
-    <ConstraintSummary validation={recommendation.validation} />
-  </div>
-);
-
-type TransferMetricProps = {
-  label: string;
-  value: string;
-};
-
-const TransferMetric = ({ label, value }: TransferMetricProps) => (
-  <div className="rounded-md bg-white p-3 text-center">
-    <div className="text-lg font-bold text-fpl-dark">{value}</div>
-    <div className="text-xs text-gray-500">{label}</div>
-  </div>
-);
-
-type TransferPlayerProps = {
-  label: string;
-  name: string;
-  points: number;
-  price: number;
-};
-
-const TransferPlayer = ({ label, name, points, price }: TransferPlayerProps) => (
-  <div>
-    <div className="text-xs font-semibold uppercase text-gray-500">{label}</div>
-    <div className="font-medium text-gray-900">{name}</div>
-    <div className="text-sm text-gray-600">
-      {formatPoints(points)} pts - {formatPrice(price)}
-    </div>
-  </div>
-);
-
-const signedPoints = (value: number) => `${value > 0 ? '+' : ''}${formatPoints(value)}`;
-
-const formatMoneyDelta = (value: number): string => {
-  if (value === 0) return formatPrice(0);
-  return `${value > 0 ? '+' : '-'}${formatPrice(Math.abs(value))}`;
-};
+        ))}
+      </div>
+      <p className="mt-7 border-t border-line pt-4 text-[13px] leading-relaxed text-ink-faint">
+        {fromProvider
+          ? 'This text was written by a language model from the plan above. It was checked so that it only names players in the plan.'
+          : 'This text was assembled from the plan above by fixed rules, with no language model involved.'}
+        {' '}The lineup, captain and transfers were chosen by the optimizer before any text was written. {explanation.disclaimer}
+      </p>
+    </section>
+  );
+}
 
 const humanizeKey = (value: string): string => {
-  return value
-    .split('_')
-    .map(part => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(' ');
+  const text = value.split('_').join(' ');
+  return text.charAt(0).toUpperCase() + text.slice(1);
 };
 
 const formatConstraintValue = (value: number | string | Record<string, number>): string => {
-  if (typeof value === 'number' || typeof value === 'string') {
-    return String(value);
-  }
-
-  return Object.entries(value)
-    .map(([key, entryValue]) => `${key}: ${entryValue}`)
-    .join(', ');
+  if (typeof value === 'number' || typeof value === 'string') return String(value);
+  return Object.entries(value).map(([key, entryValue]) => `${key}: ${entryValue}`).join(', ');
 };
-
-export default OptimizerRecommendations;

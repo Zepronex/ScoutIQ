@@ -17,5 +17,26 @@ services:
       timeout: 5s
       retries: 10
 
+  # The production image, for a rehearsal or a single-server deployment:
+  #   docker compose --profile app up -d --build
+  app:
+    profiles: ["app"]
+    build: .
+    container_name: scoutiq-app
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-scoutiq}:${POSTGRES_PASSWORD:-scoutiq}@postgres:5432/${POSTGRES_DB:-scoutiq}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3001}
+      SCOUTIQ_DATA_MODE: ${SCOUTIQ_DATA_MODE:-fpl}
+      SCOUTIQ_TRUST_PROXY: ${SCOUTIQ_TRUST_PROXY:-}
+      SCOUTIQ_AGENT_ENABLED: ${SCOUTIQ_AGENT_ENABLED:-false}
+    ports:
+      - "127.0.0.1:${APP_PORT:-3001}:3001"
+    mem_limit: 512m
+    cpus: 1.0
+
 volumes:
   postgres-data:

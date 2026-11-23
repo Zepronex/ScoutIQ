@@ -92,50 +92,57 @@ export default function SquadPage({ squadState, planning }: { squadState: SquadS
     }
   };
 
+  const projections = useMemo(
+    () => new Map((planning.data?.players ?? []).map(player => [player.playerId, player.predictedPoints])),
+    [planning.data]
+  );
+
   return (
-    <div className="space-y-5">
+    <div className="space-y-6">
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="page-title">Squad builder</h1>
-          <p className="mt-2 text-slate-600">Choose 15 players to review your lineup and transfer options.</p>
+          <p className="page-lede">Choose 15 players to review your lineup and transfer options.</p>
         </div>
         {canAnalyze ? <Link className="btn-primary" to="/analyze">Review gameweek plan <ArrowRight className="h-4 w-4" aria-hidden="true" /></Link>
           : <button type="button" className="btn-primary" disabled>Review gameweek plan</button>}
       </header>
       <GameweekStatus planning={planning} />
-      <fieldset disabled={generating} className="min-w-0 space-y-5">
-        <section className="card flex flex-wrap items-center justify-between gap-4">
-          <div>
-            <label htmlFor="squad-type" className="block text-sm font-semibold">Squad type</label>
-            <select id="squad-type" className="input-field mt-1" value={owned ? 'existing' : 'draft'}
-              onChange={event => dispatch({ type: 'mode', mode: event.target.value === 'existing' ? 'existing' : 'draft' })}>
-              <option value="draft">New draft · £100.0m</option>
-              <option value="existing">My existing FPL squad</option>
-            </select>
-          </div>
-          {!players.length && !owned && (
+      <fieldset disabled={generating} className="min-w-0 space-y-6">
+        <section className="grid gap-x-10 gap-y-5 md:grid-cols-[auto_minmax(0,1fr)] md:items-start">
+          <div className="flex flex-wrap items-end gap-3">
             <div>
-              <button type="button" className="btn-secondary" disabled={!runId || loading || !!catalogError} onClick={generate}>
+              <label htmlFor="squad-type" className="field-label">Squad type</label>
+              <select id="squad-type" className="input-field mt-1 w-auto min-w-56" value={owned ? 'existing' : 'draft'}
+                onChange={event => dispatch({ type: 'mode', mode: event.target.value === 'existing' ? 'existing' : 'draft' })}>
+                <option value="draft">New draft · £100.0m</option>
+                <option value="existing">My existing FPL squad</option>
+              </select>
+            </div>
+            {!players.length && !owned && (
+              <button type="button" className="btn-dark" disabled={!runId || loading || !!catalogError} onClick={generate}>
                 <Sparkles className="h-4 w-4" aria-hidden="true" /> {generating ? 'Generating draft…' : 'Generate a draft'}
               </button>
-              {!runId && !planning.loading && <p className="mt-2 text-sm text-slate-600">Draft generation needs gameweek projections.</p>}
-            </div>
+            )}
+            {!players.length && !owned && !runId && !planning.loading && (
+              <p className="w-full text-sm text-ink-soft">Draft generation needs gameweek projections.</p>
+            )}
+          </div>
+          {planning.data?.source === 'fpl' && (
+            <EntryImport key={sourceUpdatedAt} replacing={players.length > 0}
+              onImport={imported => dispatch({ type: 'replace', squad: imported })} />
           )}
         </section>
-        {planning.data?.source === 'fpl' && (
-          <EntryImport key={sourceUpdatedAt} replacing={players.length > 0}
-            onImport={imported => dispatch({ type: 'replace', squad: imported })} />
-        )}
-        {squadState.error && <ErrorMessage message={squadState.error} onDismiss={squadState.clearError} />}
+        {squadState.error && <ErrorMessage title="That change was not made" message={squadState.error} onDismiss={squadState.clearError} />}
         {generationError && <ErrorMessage message={generationError} action={{ label: 'Refresh projections', onClick: planning.reload }} />}
         {missing.length > 0 && <ErrorMessage type="warning" title="Saved players need replacing"
           message={`${missing.map(slot => slot.name ?? slot.id).join(', ')} no longer match the current FPL player list.`} />}
         {catalogError && <ErrorMessage title="Player list unavailable" message={catalogError} action={{ label: 'Retry player list', onClick: () => setRefresh(value => value + 1) }} />}
         {loading && <LoadingSpinner text="Loading FPL players…" />}
-        <SquadForm squadState={squadState} players={catalogError || loading ? [] : catalog} />
+        <SquadForm squadState={squadState} players={catalogError || loading ? [] : catalog} projections={projections} />
       </fieldset>
       {!canAnalyze && players.length > 0 && (
-        <p className="text-sm text-slate-700" aria-live="polite">{validation.errors.join(' ')}</p>
+        <p className="text-sm text-ink-soft" aria-live="polite">{validation.errors.join(' ')}</p>
       )}
       {canAnalyze && <Link className="btn-primary w-full sm:hidden" to="/analyze">Review gameweek plan</Link>}
     </div>

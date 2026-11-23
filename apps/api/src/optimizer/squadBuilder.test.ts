@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { buildSquadFromCandidates } from './squadBuilder';
+import { optimizeStartingXi } from './startingXi';
 import { PlayerCandidate } from './types';
 
 describe('squad builder', () => {
@@ -42,6 +43,42 @@ describe('squad builder', () => {
     assert.deepEqual(squad.slots.filter(player => player.position === 'GK').map(player => player.playerId), [103, 104]);
     assert.equal(squad.bank, 0);
     assert.throws(() => buildSquadFromCandidates({ candidates, budget: 61.9 }), /squad_generation_failed/);
+  });
+
+  it('balances the budget across the starting XI instead of stranding stars beside non-players', () => {
+    // Three premium players swallow the budget if picked greedily, leaving a
+    // starting keeper and defenders who do not play.
+    const pool: PlayerCandidate[] = [];
+    let id = 1;
+    const add = (position: PlayerCandidate['position'], count: number, price: number, points: number) => {
+      for (let index = 0; index < count; index += 1) {
+        pool.push(candidate(id, `${position} ${id}`, position, 100 + id, price, points));
+        id += 1;
+      }
+    };
+    add('FWD', 3, 20, 7);
+    add('MID', 5, 14, 6);
+    for (const position of ['GK', 'DEF', 'MID', 'FWD'] as const) {
+      add(position, 6, 6, 4.5);
+      add(position, 6, 4, 0.1);
+    }
+
+    const squad = buildSquadFromCandidates({ candidates: pool, budget: 100 });
+    const starters = optimizeStartingXi(squad).starters;
+
+    assert.equal(starters.filter(player => player.predictedPoints < 1).length, 0);
+    assert.equal(starters.reduce((sum, player) => sum + player.predictedPoints, 0) > 11 * 4.5, true);
+  });
+
+  it('respects the club limit when the best players share a club', () => {
+    const pool = candidatesFixture().map(player => ({ ...player, teamId: player.teamId + 50 }));
+    for (let index = 0; index < 6; index += 1) {
+      pool.push(candidate(200 + index, `Club star ${index}`, index < 3 ? 'MID' : 'DEF', 1, 5, 12));
+    }
+
+    const squad = buildSquadFromCandidates({ candidates: pool, budget: 100 });
+
+    assert.equal(countTeams(squad.slots).get(1), 3);
   });
 });
 

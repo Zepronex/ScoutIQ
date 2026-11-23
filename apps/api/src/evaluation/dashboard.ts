@@ -175,6 +175,17 @@ export function toEvaluationRunSummary(evaluation: ModelEvaluation): EvaluationR
     predictionCount: evaluation.predictionCount,
     mae,
     rmse,
+    byPosition: (['GK', 'DEF', 'MID', 'FWD'] as const).flatMap(position => {
+      const metrics = evaluation.metricsByPosition?.[position];
+      const baseline = evaluation.baselineMetricsByPosition?.[position];
+      if (!isRecord(metrics)) return [];
+      return [{
+        position,
+        count: readMetric(metrics, 'count') ?? 0,
+        mae: metricComparison('mae', metrics, isRecord(baseline) ? baseline : null),
+        rmse: metricComparison('rmse', metrics, isRecord(baseline) ? baseline : null)
+      }];
+    }),
     evaluatedGameweeks: evaluation.evaluatedGameweeks,
     skippedGameweeks: evaluation.skippedGameweeks,
     evaluatedGameweekCount: evaluation.evaluatedGameweeks.length,

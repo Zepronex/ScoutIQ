@@ -325,6 +325,7 @@ export type EvaluationRunSummary = {
   predictionCount: number;
   mae: EvaluationMetricComparison;
   rmse: EvaluationMetricComparison;
+  byPosition: Array<{ position: Pos; count: number; mae: EvaluationMetricComparison; rmse: EvaluationMetricComparison }>;
   evaluatedGameweeks: number[];
   skippedGameweeks: number[];
   evaluatedGameweekCount: number;

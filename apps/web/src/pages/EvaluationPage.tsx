@@ -1,26 +1,13 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
-import {
-  AlertTriangle,
-  BarChart3,
-  Database,
-  FileText,
-  GitCompare,
-  Layers3,
-  RefreshCw,
-  Server
-} from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { RefreshCw } from 'lucide-react';
 import ErrorMessage from '../components/ErrorMessage';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { apiClient } from '../lib/api';
-import {
-  EvaluationDataHealth,
-  EvaluationLatest,
-  EvaluationMetricComparison,
-  EvaluationRunSummary,
-  EvaluationRuns
-} from '../lib/types';
+import { formatCount, formatShortDateTime, positionNames } from '../lib/format';
+import { EvaluationDataHealth, EvaluationLatest, EvaluationMetricComparison, EvaluationRuns } from '../lib/types';
 
-type EvaluationState = {
+type State = {
   latest: EvaluationLatest | null;
   health: EvaluationDataHealth | null;
   runs: EvaluationRuns | null;
@@ -28,452 +15,263 @@ type EvaluationState = {
   error: string | null;
 };
 
-const numberFormatter = new Intl.NumberFormat('en-US');
+const metric = new Intl.NumberFormat('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const percent = new Intl.NumberFormat('en-GB', { maximumFractionDigits: 1 });
 
-const EvaluationPage = () => {
-  const [state, setState] = useState<EvaluationState>({
-    latest: null,
-    health: null,
-    runs: null,
-    loading: true,
-    error: null
-  });
+const inputs = [
+  ['Recent form', 'Average points over the player’s last three fixtures.'],
+  ['Season form', 'Average points over every fixture so far this season.'],
+  ['Minutes', 'Share of available minutes played, recently and across the season.'],
+  ['Price', 'What the game charges for the player, which tracks expected output.'],
+  ['Fixture', 'FPL’s difficulty rating for the opponent, and home or away.'],
+  ['Availability', 'The published chance of playing. Injured and suspended players project to zero.']
+];
 
-  const loadEvaluation = useCallback(async () => {
+const blindSpots = [
+  'Team news after the data was captured, including late injuries and rotation.',
+  'Penalty and set-piece duty, tactical changes and new signings with no minutes yet.',
+  'Anything beyond the next gameweek. Transfers are judged on one gameweek only.',
+  'Chips, automatic substitutions and bonus-point patterns.'
+];
+
+export default function EvaluationPage() {
+  const [state, setState] = useState<State>({ latest: null, health: null, runs: null, loading: true, error: null });
+
+  const load = useCallback(async () => {
     setState(current => ({ ...current, loading: true, error: null }));
-
     try {
-      const [latestResponse, healthResponse, runsResponse] = await Promise.all([
+      const [latest, health, runs] = await Promise.all([
         apiClient.getEvaluationLatest(),
         apiClient.getEvaluationDataHealth(),
         apiClient.getEvaluationRuns(5)
       ]);
-
-      if (!latestResponse.success || !latestResponse.data) {
-        throw new Error(latestResponse.error || 'Evaluation summary is unavailable.');
+      if (!latest.success || !latest.data || !health.success || !health.data || !runs.success || !runs.data) {
+        throw new Error('Incomplete evaluation data');
       }
-      if (!healthResponse.success || !healthResponse.data) {
-        throw new Error(healthResponse.error || 'Evaluation data health is unavailable.');
-      }
-      if (!runsResponse.success || !runsResponse.data) {
-        throw new Error(runsResponse.error || 'Evaluation runs are unavailable.');
-      }
-
-      setState({
-        latest: latestResponse.data,
-        health: healthResponse.data,
-        runs: runsResponse.data,
-        loading: false,
-        error: null
-      });
+      setState({ latest: latest.data, health: health.data, runs: runs.data, loading: false, error: null });
     } catch {
-      setState(current => ({
-        ...current,
-        loading: false,
-        error: 'Could not load evaluation data. Check that the API is running and the database is reachable.'
-      }));
+      setState(current => ({ ...current, loading: false, error: 'Could not load the model results. Try again shortly.' }));
     }
   }, []);
 
-  useEffect(() => {
-    loadEvaluation();
-  }, [loadEvaluation]);
+  useEffect(() => { void load(); }, [load]);
 
-  const warnings = useMemo(() => {
-    return [
-      ...(state.latest?.warnings ?? []),
-      ...(state.health?.warnings ?? []),
-      ...(state.runs?.warnings ?? [])
-    ].filter((warning, index, allWarnings) => allWarnings.indexOf(warning) === index);
-  }, [state.latest, state.health, state.runs]);
+  if (state.loading) return <LoadingSpinner text="Loading model results…" />;
+  if (state.error) return <ErrorMessage title="Model results unavailable" message={state.error} action={{ label: 'Retry', onClick: load }} />;
 
-  if (state.loading) {
-    return (
-      <div className="min-h-[420px] flex items-center justify-center">
-        <LoadingSpinner size="lg" text="Loading evaluation dashboard..." />
-      </div>
-    );
-  }
-
-  if (state.error) {
-    return (
-      <ErrorMessage
-        title="Evaluation Dashboard Unavailable"
-        message={state.error}
-        action={{
-          label: 'Retry',
-          onClick: loadEvaluation
-        }}
-      />
-    );
-  }
-
-  const latestRun = state.latest?.latestRun ?? null;
+  const run = state.latest?.latestRun ?? null;
   const coverage = state.health?.coverage ?? null;
-  const requiredCommands = state.latest?.requiredCommands ?? state.health?.requiredCommands ?? [];
+  const prediction = state.latest?.latestPredictionRun ?? null;
+  const weeks = run?.evaluatedGameweeks ?? [];
+  const range = weeks.length ? (weeks.length > 1 ? `Gameweeks ${weeks[0]} to ${weeks[weeks.length - 1]}` : `Gameweek ${weeks[0]}`) : null;
 
   return (
-    <div className="space-y-8">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+    <div className="space-y-12">
+      <header className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <div className="flex items-center gap-3">
-            <BarChart3 className="h-7 w-7 text-blue-700" />
-            <h1 className="text-3xl font-bold text-gray-950">Model Evaluation</h1>
-          </div>
-          <p className="mt-2 max-w-3xl text-gray-600">
-            Transparent prediction quality, baseline comparison, data coverage, and pipeline status.
+          <h1 className="page-title">How good are the projections?</h1>
+          <p className="page-lede">
+            Every projection comes from a small statistical model. It is tested on gameweeks it had not seen
+            and compared with a simple benchmark: a player’s average over their last three fixtures.
           </p>
         </div>
-        <button
-          onClick={loadEvaluation}
-          className="inline-flex items-center justify-center gap-2 rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-800 shadow-sm transition-colors hover:bg-gray-50"
-        >
-          <RefreshCw className="h-4 w-4" />
-          Refresh
+        <button type="button" onClick={load} className="btn-secondary">
+          <RefreshCw className="h-4 w-4" aria-hidden="true" /> Refresh
         </button>
+      </header>
+
+      {run ? (
+        <section aria-labelledby="backtest">
+          <div className="rule-heading">
+            <h2 id="backtest" className="section-title">Backtest{range ? ` · ${range}` : ''}</h2>
+            <span className="shrink-0 text-[13px] tabular-nums text-ink-soft">{formatCount(run.backtestRows ?? run.predictionCount)} predictions</span>
+          </div>
+          <p className="mt-4 max-w-3xl text-base leading-relaxed">{verdict(run.mae, run.rmse)}</p>
+          <div className="mt-6 grid gap-x-12 gap-y-8 md:grid-cols-2">
+            <Comparison title="Average miss" abbreviation="MAE" comparison={run.mae}
+              note="How far a projection was from the real score on average, in points." />
+            <Comparison title="Penalty for big misses" abbreviation="RMSE" comparison={run.rmse}
+              note="Like the average miss, but large errors count for more." />
+          </div>
+          <p className="mt-5 text-[13px] text-ink-faint">Lower is better on both measures.</p>
+
+          {run.byPosition.length > 0 && (
+            <div className="mt-10 overflow-x-auto">
+              <table className="data-table min-w-[30rem]">
+                <caption className="pb-3 text-left text-sm font-semibold text-ink">By position</caption>
+                <thead>
+                  <tr>
+                    <th scope="col">Position</th>
+                    <th scope="col" className="text-right">Predictions</th>
+                    <th scope="col" className="text-right">Average miss</th>
+                    <th scope="col" className="text-right">Benchmark</th>
+                    <th scope="col" className="text-right">Big-miss score</th>
+                    <th scope="col" className="text-right">Benchmark</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {run.byPosition.map(row => (
+                    <tr key={row.position}>
+                      <th scope="row" className="border-b border-line px-2 py-2.5 text-left font-semibold sm:px-3">{positionNames[row.position]}</th>
+                      <td className="text-right tabular-nums text-ink-soft">{formatCount(row.count)}</td>
+                      <Cell comparison={row.mae} />
+                      <td className="text-right tabular-nums text-ink-soft">{formatMetric(row.mae.baselineValue)}</td>
+                      <Cell comparison={row.rmse} />
+                      <td className="text-right tabular-nums text-ink-soft">{formatMetric(row.rmse.baselineValue)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+      ) : (
+        <ErrorMessage type="info" title="No backtest yet"
+          message="The model is tested once three gameweeks of the season are complete. Projections before then come from last season’s fit." />
+      )}
+
+      <div className="grid gap-x-14 gap-y-12 lg:grid-cols-2">
+        <section aria-labelledby="model-inputs">
+          <div className="rule-heading"><h2 id="model-inputs" className="section-title">What goes into a projection</h2></div>
+          <dl>
+            {inputs.map(([term, description]) => (
+              <div key={term} className="grid grid-cols-[7.5rem_minmax(0,1fr)] gap-3 border-b border-line py-3 text-sm">
+                <dt className="font-semibold">{term}</dt>
+                <dd className="leading-relaxed text-ink-soft">{description}</dd>
+              </div>
+            ))}
+          </dl>
+          <p className="mt-4 text-sm leading-relaxed text-ink-soft">
+            The weights are fitted to this season’s results together with a summary of last season, so early gameweeks
+            are not guesswork. Lineups, captaincy and transfers are then chosen by an optimizer that enforces the FPL squad rules.
+          </p>
+        </section>
+
+        <section aria-labelledby="model-limits">
+          <div className="rule-heading"><h2 id="model-limits" className="section-title">What it cannot see</h2></div>
+          <ul>
+            {blindSpots.map(item => <li key={item} className="border-b border-line py-3 text-sm leading-relaxed text-ink-soft">{item}</li>)}
+          </ul>
+          <p className="mt-4 text-sm leading-relaxed text-ink-soft">
+            Treat a projection as a starting point. A typical miss of more than a point per player means close calls are close.
+          </p>
+        </section>
       </div>
 
-      {warnings.length > 0 && (
-        <section className="rounded-lg border border-amber-200 bg-amber-50 p-4">
-          <div className="flex items-start gap-3">
-            <AlertTriangle className="mt-0.5 h-5 w-5 flex-shrink-0 text-amber-700" />
-            <div>
-              <h2 className="font-semibold text-amber-950">Data Warnings</h2>
-              <ul className="mt-2 space-y-1 text-sm text-amber-900">
-                {warnings.map(warning => (
-                  <li key={warning}>{warning}</li>
+      <section aria-labelledby="model-data">
+        <div className="rule-heading">
+          <h2 id="model-data" className="section-title">Data behind the current projections</h2>
+          {prediction?.sourceGeneratedAt && <span className="shrink-0 text-[13px] text-ink-soft">Captured {formatShortDateTime(prediction.sourceGeneratedAt)}</span>}
+        </div>
+        {coverage && (
+          <dl className="grid grid-cols-2 border-b border-line sm:grid-cols-3 lg:grid-cols-6">
+            {([
+              ['Players', coverage.players], ['Clubs', coverage.teams], ['Fixtures', coverage.fixtures],
+              ['Projections', coverage.latestPredictionRows], ['Backtests run', coverage.evaluationRuns],
+              ['Gameweeks tested', weeks.length]
+            ] as Array<[string, number]>).map(([label, value]) => (
+              <div key={label} className="py-4 pr-4">
+                <dt className="eyebrow">{label}</dt>
+                <dd className="figure mt-2 text-3xl leading-none">{formatCount(value)}</dd>
+              </div>
+            ))}
+          </dl>
+        )}
+        {state.runs && state.runs.runs.length > 1 && (
+          <div className="mt-8 overflow-x-auto">
+            <table className="data-table min-w-[26rem]">
+              <caption className="pb-3 text-left text-sm font-semibold text-ink">Recent backtests</caption>
+              <thead>
+                <tr>
+                  <th scope="col">Run</th>
+                  <th scope="col" className="text-right">Predictions</th>
+                  <th scope="col" className="text-right">Average miss</th>
+                  <th scope="col" className="text-right">Big-miss score</th>
+                </tr>
+              </thead>
+              <tbody>
+                {state.runs.runs.map(item => (
+                  <tr key={item.id}>
+                    <td className="tabular-nums">{formatShortDateTime(item.createdAt)}</td>
+                    <td className="text-right tabular-nums text-ink-soft">{formatCount(item.backtestRows ?? item.predictionCount)}</td>
+                    <td className="text-right tabular-nums">{formatMetric(item.mae.modelValue)}</td>
+                    <td className="text-right tabular-nums">{formatMetric(item.rmse.modelValue)}</td>
+                  </tr>
                 ))}
-              </ul>
-            </div>
+              </tbody>
+            </table>
           </div>
-        </section>
-      )}
-
-      {!latestRun && (
-        <EmptyEvaluationState commands={requiredCommands} />
-      )}
-
-      {latestRun && (
-        <>
-          <section className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-            <MetricCard title="MAE" comparison={latestRun.mae} />
-            <MetricCard title="RMSE" comparison={latestRun.rmse} />
-            <SummaryCard
-              label="Backtest Rows"
-              value={formatCount(latestRun.backtestRows)}
-              detail={`${latestRun.evaluatedGameweekCount} evaluated gameweeks`}
-              icon={<FileText className="h-5 w-5" />}
-            />
-            <SummaryCard
-              label="Baseline Status"
-              value={formatBaselineStatus(latestRun)}
-              detail="Lower MAE and RMSE are better"
-              icon={<GitCompare className="h-5 w-5" />}
-            />
-          </section>
-
-          <section className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
-            <div className="flex items-center gap-3">
-              <Server className="h-5 w-5 text-blue-700" />
-              <h2 className="text-xl font-semibold text-gray-950">Latest Run Metadata</h2>
-            </div>
-            <dl className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-              <MetadataItem label="Model" value={latestRun.modelName} />
-              <MetadataItem label="Version" value={latestRun.modelVersion} />
-              <MetadataItem label="Evaluation Type" value={latestRun.evaluationType} />
-              <MetadataItem label="Evaluation Key" value={shortenKey(latestRun.evaluationKey)} />
-              <MetadataItem label="Created" value={formatDateTime(latestRun.createdAt)} />
-              <MetadataItem label="Updated" value={formatDateTime(latestRun.updatedAt)} />
-              <MetadataItem label="Skipped Gameweeks" value={formatCount(latestRun.skippedGameweekCount)} />
-              <MetadataItem
-                label="Prediction Run"
-                value={state.latest?.latestPredictionRun ? shortenKey(state.latest.latestPredictionRun.runKey) : 'Not loaded'}
-              />
-            </dl>
-          </section>
-        </>
-      )}
-
-      {coverage && (
-        <section>
-          <div className="mb-4 flex items-center gap-3">
-            <Database className="h-5 w-5 text-blue-700" />
-            <h2 className="text-xl font-semibold text-gray-950">Data Coverage</h2>
-          </div>
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-6">
-            <CoverageCard label="Players" value={coverage.players} />
-            <CoverageCard label="Teams" value={coverage.teams} />
-            <CoverageCard label="Gameweeks" value={coverage.gameweeks} />
-            <CoverageCard label="Fixtures" value={coverage.fixtures} />
-            <CoverageCard label="History Rows" value={coverage.playerGameweekHistoryRows} />
-            <CoverageCard label="Prediction Rows" value={coverage.latestPredictionRows} />
-          </div>
-        </section>
-      )}
-
-      <PipelineTransparency />
-
-      <section className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        <Limitations limitations={state.latest?.limitations ?? []} />
-        <RecentRuns runs={state.runs?.runs ?? []} />
+        )}
+        <p className="mt-5 text-[13px] leading-relaxed text-ink-faint">
+          {run && <>Model <code className="rounded bg-paper-sunk px-1">{run.modelVersion}</code>. </>}
+          Source: the official Fantasy Premier League data feed. <Link className="text-link" to="/top-players">See this week’s projections</Link>.
+        </p>
       </section>
     </div>
   );
-};
-
-type MetricCardProps = {
-  title: string;
-  comparison: EvaluationMetricComparison;
-};
-
-const MetricCard = ({ title, comparison }: MetricCardProps) => {
-  const status = metricStatus(comparison);
-
-  return (
-    <div className="rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-sm font-medium text-gray-600">{title}</p>
-          <p className="mt-2 text-3xl font-bold text-gray-950">{formatMetric(comparison.modelValue)}</p>
-        </div>
-        <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${status.className}`}>
-          {status.label}
-        </span>
-      </div>
-      <div className="mt-4 space-y-1 text-sm text-gray-600">
-        <div className="flex justify-between gap-3">
-          <span>Baseline</span>
-          <span className="font-medium text-gray-900">{formatMetric(comparison.baselineValue)}</span>
-        </div>
-        <div className="flex justify-between gap-3">
-          <span>Difference vs baseline</span>
-          <span className="font-medium text-gray-900">{formatSignedMetric(comparison.differenceVsBaseline)}</span>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-type SummaryCardProps = {
-  label: string;
-  value: string;
-  detail: string;
-  icon: ReactNode;
-};
-
-const SummaryCard = ({ label, value, detail, icon }: SummaryCardProps) => (
-  <div className="rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
-    <div className="flex items-center gap-2 text-blue-700">{icon}</div>
-    <p className="mt-3 text-sm font-medium text-gray-600">{label}</p>
-    <p className="mt-2 text-2xl font-bold text-gray-950">{value}</p>
-    <p className="mt-2 text-sm text-gray-500">{detail}</p>
-  </div>
-);
-
-type CoverageCardProps = {
-  label: string;
-  value: number | null;
-};
-
-const CoverageCard = ({ label, value }: CoverageCardProps) => (
-  <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
-    <p className="text-sm font-medium text-gray-600">{label}</p>
-    <p className="mt-2 text-2xl font-bold text-gray-950">{formatCount(value)}</p>
-  </div>
-);
-
-type MetadataItemProps = {
-  label: string;
-  value: string;
-};
-
-const MetadataItem = ({ label, value }: MetadataItemProps) => (
-  <div>
-    <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500">{label}</dt>
-    <dd className="mt-1 break-words text-sm font-medium text-gray-900">{value}</dd>
-  </div>
-);
-
-const EmptyEvaluationState = ({ commands }: { commands: string[] }) => (
-  <section className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
-    <div className="flex items-start gap-3">
-      <AlertTriangle className="mt-1 h-5 w-5 flex-shrink-0 text-amber-700" />
-      <div>
-        <h2 className="text-xl font-semibold text-gray-950">No Evaluation Data Loaded</h2>
-        <p className="mt-2 text-gray-600">
-          Generate the model artifacts, run the backtest, and load predictions into PostgreSQL before reviewing model quality.
-        </p>
-        <div className="mt-4 grid gap-2">
-          {commands.map(command => (
-            <code key={command} className="rounded border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-800">
-              {command}
-            </code>
-          ))}
-        </div>
-      </div>
-    </div>
-  </section>
-);
-
-const PipelineTransparency = () => {
-  const steps = [
-    {
-      title: 'Bronze',
-      description: 'Raw official FPL ingestion is preserved with source metadata and timestamps.'
-    },
-    {
-      title: 'Silver',
-      description: 'Players, teams, gameweeks, and fixtures are normalized into stable typed records.'
-    },
-    {
-      title: 'Gold',
-      description: 'Feature-ready player and fixture rows are prepared without post-deadline outcomes.'
-    },
-    {
-      title: 'Feature Engineering',
-      description: 'Expected-points features use pre-deadline form, minutes, availability, and fixture context.'
-    },
-    {
-      title: 'Backtesting',
-      description: 'Walk-forward evaluation compares model errors against the recent-points baseline.'
-    },
-    {
-      title: 'Prediction Serving',
-      description: 'Loaded prediction rows feed deterministic optimizer endpoints and preserve run metadata.'
-    }
-  ];
-
-  return (
-    <section className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
-      <div className="flex items-center gap-3">
-        <Layers3 className="h-5 w-5 text-blue-700" />
-        <h2 className="text-xl font-semibold text-gray-950">Pipeline Transparency</h2>
-      </div>
-      <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-        {steps.map(step => (
-          <div key={step.title} className="rounded-lg border border-gray-200 bg-gray-50 p-4">
-            <h3 className="font-semibold text-gray-950">{step.title}</h3>
-            <p className="mt-2 text-sm leading-6 text-gray-600">{step.description}</p>
-          </div>
-        ))}
-      </div>
-    </section>
-  );
-};
-
-const Limitations = ({ limitations }: { limitations: string[] }) => (
-  <section className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
-    <div className="flex items-center gap-3">
-      <AlertTriangle className="h-5 w-5 text-amber-700" />
-      <h2 className="text-xl font-semibold text-gray-950">Limitations</h2>
-    </div>
-    <ul className="mt-4 space-y-3 text-sm leading-6 text-gray-700">
-      {(limitations.length > 0 ? limitations : defaultLimitations).map(limit => (
-        <li key={limit}>{limit}</li>
-      ))}
-    </ul>
-  </section>
-);
-
-const RecentRuns = ({ runs }: { runs: EvaluationRunSummary[] }) => (
-  <section className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
-    <div className="flex items-center gap-3">
-      <FileText className="h-5 w-5 text-blue-700" />
-      <h2 className="text-xl font-semibold text-gray-950">Recent Evaluation Runs</h2>
-    </div>
-    {runs.length === 0 ? (
-      <p className="mt-4 text-sm text-gray-600">No evaluation runs are loaded.</p>
-    ) : (
-      <div className="mt-4 overflow-x-auto">
-        <table className="min-w-full text-left text-sm">
-          <thead className="border-b border-gray-200 text-xs uppercase text-gray-500">
-            <tr>
-              <th className="py-2 pr-4 font-semibold">Run</th>
-              <th className="py-2 pr-4 font-semibold">MAE</th>
-              <th className="py-2 pr-4 font-semibold">RMSE</th>
-              <th className="py-2 pr-4 font-semibold">Rows</th>
-              <th className="py-2 font-semibold">Created</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-100">
-            {runs.map(run => (
-              <tr key={run.id}>
-                <td className="py-3 pr-4 font-medium text-gray-900">{run.id}</td>
-                <td className="py-3 pr-4 text-gray-700">{formatMetric(run.mae.modelValue)}</td>
-                <td className="py-3 pr-4 text-gray-700">{formatMetric(run.rmse.modelValue)}</td>
-                <td className="py-3 pr-4 text-gray-700">{formatCount(run.backtestRows)}</td>
-                <td className="py-3 text-gray-700">{formatDateTime(run.createdAt)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    )}
-  </section>
-);
-
-const defaultLimitations = [
-  'Model quality is evaluated against a recent-points baseline.',
-  'The current model should not be treated as clearly better unless it is lower than the baseline on both MAE and RMSE.',
-  'Optimizer recommendations use deterministic FPL rule checks and loaded prediction rows.',
-  'Predictions are decision support estimates, not certainty.'
-];
-
-function metricStatus(comparison: EvaluationMetricComparison): { label: string; className: string } {
-  if (comparison.modelBeatsBaseline === null) {
-    return {
-      label: 'Missing baseline',
-      className: 'border-gray-200 bg-gray-50 text-gray-700'
-    };
-  }
-
-  if (comparison.modelBeatsBaseline) {
-    return {
-      label: 'Model lower',
-      className: 'border-green-200 bg-green-50 text-green-800'
-    };
-  }
-
-  return {
-    label: 'Baseline lower',
-    className: 'border-red-200 bg-red-50 text-red-800'
-  };
 }
 
-function formatBaselineStatus(run: EvaluationRunSummary): string {
-  if (run.mae.modelBeatsBaseline === true && run.rmse.modelBeatsBaseline === true) {
-    return 'Model lower on both';
+function verdict(mae: EvaluationMetricComparison, rmse: EvaluationMetricComparison): string {
+  if (mae.modelBeatsBaseline === null || rmse.modelBeatsBaseline === null) {
+    return 'The benchmark comparison is incomplete for this run.';
   }
-  return 'Not clearly better';
+  if (mae.modelBeatsBaseline && rmse.modelBeatsBaseline) {
+    return 'The model was closer to the real scores than the benchmark on both measures. The margin on the average miss is small, so it is an edge, not a guarantee.';
+  }
+  if (!mae.modelBeatsBaseline && !rmse.modelBeatsBaseline) {
+    return 'The benchmark was closer to the real scores than the model on both measures in this run. Treat the projections with extra caution.';
+  }
+  return rmse.modelBeatsBaseline
+    ? 'A mixed result. The model made fewer large errors than the benchmark, but its average miss was slightly higher.'
+    : 'A mixed result. The model’s average miss was lower than the benchmark’s, but it made more large errors.';
+}
+
+function Comparison({ title, abbreviation, comparison, note }: {
+  title: string; abbreviation: string; comparison: EvaluationMetricComparison; note: string;
+}) {
+  const { modelValue, baselineValue } = comparison;
+  const scale = Math.max(modelValue ?? 0, baselineValue ?? 0) || 1;
+  const change = modelValue !== null && baselineValue ? ((modelValue - baselineValue) / baselineValue) * 100 : null;
+  return (
+    <div>
+      <h3 className="flex items-baseline justify-between gap-3">
+        <span className="font-semibold">{title} <abbr className="text-[13px] font-normal text-ink-faint no-underline" title={abbreviation === 'MAE' ? 'Mean absolute error' : 'Root mean squared error'}>{abbreviation}</abbr></span>
+        {change !== null && (
+          <span className={`text-[13px] font-semibold tabular-nums ${change < 0 ? 'text-pitch-turf' : 'text-clay'}`}>
+            {percent.format(Math.abs(change))}% {change < 0 ? 'lower' : 'higher'} than benchmark
+          </span>
+        )}
+      </h3>
+      <div className="mt-3 space-y-2">
+        <Bar label="Model" value={modelValue} scale={scale} strong />
+        <Bar label="Benchmark" value={baselineValue} scale={scale} />
+      </div>
+      <p className="mt-3 text-[13px] leading-relaxed text-ink-faint">{note}</p>
+    </div>
+  );
+}
+
+function Bar({ label, value, scale, strong }: { label: string; value: number | null; scale: number; strong?: boolean }) {
+  return (
+    <div className="grid grid-cols-[5.5rem_minmax(0,1fr)_3.25rem] items-center gap-3 text-sm">
+      <span className={strong ? 'font-semibold' : 'text-ink-soft'}>{label}</span>
+      <span className="h-5 rounded-sm bg-paper-sunk">
+        <span className={`block h-full rounded-sm ${strong ? 'bg-pitch-turf' : 'bg-line-strong'}`}
+          style={{ width: `${value === null ? 0 : Math.max(2, (value / scale) * 100)}%` }} />
+      </span>
+      <span className="figure text-right text-base">{formatMetric(value)}</span>
+    </div>
+  );
+}
+
+function Cell({ comparison }: { comparison: EvaluationMetricComparison }) {
+  return (
+    <td className={`text-right font-semibold tabular-nums ${comparison.modelBeatsBaseline === false ? 'text-clay' : 'text-ink'}`}>
+      {formatMetric(comparison.modelValue)}
+    </td>
+  );
 }
 
 function formatMetric(value: number | null): string {
-  return value === null ? 'Unavailable' : value.toFixed(4);
+  return value === null ? '—' : metric.format(value);
 }
-
-function formatSignedMetric(value: number | null): string {
-  if (value === null) return 'Unavailable';
-  return `${value > 0 ? '+' : ''}${value.toFixed(4)}`;
-}
-
-function formatCount(value: number | null): string {
-  return value === null ? 'Not loaded' : numberFormatter.format(value);
-}
-
-function formatDateTime(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleString(undefined, {
-    year: 'numeric',
-    month: 'short',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit'
-  });
-}
-
-function shortenKey(value: string): string {
-  return value.length <= 14 ? value : `${value.slice(0, 14)}...`;
-}
-
-export default EvaluationPage;

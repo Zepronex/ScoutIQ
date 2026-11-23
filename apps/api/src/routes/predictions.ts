@@ -1,6 +1,7 @@
 import { Router, Response, type Router as ExpressRouter } from 'express';
 import { z } from 'zod';
 import { getServerPool, Queryable } from '../db/client';
+import { createTtlCache } from '../lib/guards';
 import {
   readGameweekPredictionSummary,
   readLatestPredictionSummary,
@@ -21,29 +22,35 @@ const topPredictionsQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).optional().default(25)
 });
 
+const PLANNING_CACHE_MS = 10_000;
+
 export function createPredictionsRouter(client: Queryable = getServerPool()): ExpressRouter {
   const router: ExpressRouter = Router();
+
+  // The planning payload is identical for every visitor between refreshes.
+  // It stays short-lived so a passed deadline is reflected within seconds.
+  const planningCache = createTtlCache<unknown>(PLANNING_CACHE_MS);
+  const readPlanning = async () => {
+    const window = await readPlanningWindow(client);
+    const predictions = window ? await readPlanningPredictions(client, window) : [];
+    const players = predictionsToCandidates(predictions);
+    if (window && window.gameweek.runId !== null && players.length) {
+      const projectedIds = new Set(players.map(player => player.playerId));
+      const blanks = await readBlankGameweekCandidates(client, window.snapshotId, window.gameweek.id, window.gameweek.runId);
+      players.push(...blanks.filter(player => !projectedIds.has(player.playerId)));
+    }
+    return {
+      source: process.env.SCOUTIQ_DATA_MODE === 'sample' ? 'sample' : 'fpl',
+      gameweek: window ? { ...window.gameweek, runId: players.length ? window.gameweek.runId : null } : null,
+      missingPlayerCount: window ? Math.max(0, window.playerCount - players.length) : 0,
+      players
+    };
+  };
 
   router.get('/planning', async (_req, res) => {
     res.set('Cache-Control', 'no-store');
     try {
-      const window = await readPlanningWindow(client);
-      const predictions = window ? await readPlanningPredictions(client, window) : [];
-      const players = predictionsToCandidates(predictions);
-      if (window && window.gameweek.runId !== null && players.length) {
-        const projectedIds = new Set(players.map(player => player.playerId));
-        const blanks = await readBlankGameweekCandidates(client, window.snapshotId, window.gameweek.id, window.gameweek.runId);
-        players.push(...blanks.filter(player => !projectedIds.has(player.playerId)));
-      }
-      res.json({
-        success: true,
-        data: {
-          source: process.env.SCOUTIQ_DATA_MODE === 'sample' ? 'sample' : 'fpl',
-          gameweek: window ? { ...window.gameweek, runId: players.length ? window.gameweek.runId : null } : null,
-          missingPlayerCount: window ? Math.max(0, window.playerCount - players.length) : 0,
-          players
-        }
-      });
+      res.json({ success: true, data: await planningCache.get('planning', readPlanning) });
     } catch {
       res.status(503).json({ success: false, error: 'Could not load the FPL schedule. Try again shortly.' });
     }

@@ -1,6 +1,7 @@
 import { Router, Response, type Router as ExpressRouter } from 'express';
 import { z } from 'zod';
 import { getServerPool, Queryable } from '../db/client';
+import { createTtlCache } from '../lib/guards';
 import {
   PLAYER_CANDIDATE_REQUIRED_COMMANDS,
   readSquadBuilderPlayers,
@@ -15,13 +16,19 @@ const searchSchema = z.object({
 const positionSchema = z.enum(['GK', 'DEF', 'MID', 'FWD']);
 const playerIdSchema = z.coerce.number().int().positive().max(2_147_483_647);
 
+// Every visitor reads the same player list, and it only changes when a refresh
+// publishes. A short cache turns a burst of requests into one query.
+const PLAYER_LIST_CACHE_MS = 15_000;
+
 export function createPlayersRouter(client: Queryable = getServerPool()): ExpressRouter {
   const router: ExpressRouter = Router();
+  const cache = createTtlCache<Awaited<ReturnType<typeof readSquadBuilderPlayers>>>(PLAYER_LIST_CACHE_MS);
+  const readPlayers = () => cache.get('players', () => readSquadBuilderPlayers(client));
 
   // GET /api/players - Get prediction-backed local players
   router.get('/', async (_req, res) => {
     try {
-      const players = await readSquadBuilderPlayers(client);
+      const players = await readPlayers();
       if (players.length === 0) return sendMissingPlayerData(res);
 
       res.json({
@@ -38,7 +45,7 @@ export function createPlayersRouter(client: Queryable = getServerPool()): Expres
   router.get('/search', async (req, res) => {
     try {
       const { name } = searchSchema.parse(req.query);
-      const players = await readSquadBuilderPlayers(client);
+      const players = await readPlayers();
       if (players.length === 0) return sendMissingPlayerData(res);
 
       const matches = searchEnrichedPlayers(players, name);
@@ -65,7 +72,7 @@ export function createPlayersRouter(client: Queryable = getServerPool()): Expres
   router.get('/position/:pos', async (req, res) => {
     try {
       const position = positionSchema.parse(req.params.pos.toUpperCase());
-      const players = await readSquadBuilderPlayers(client);
+      const players = await readPlayers();
       if (players.length === 0) return sendMissingPlayerData(res);
 
       const filteredPlayers = players.filter(player => player.pos === position);
@@ -92,7 +99,7 @@ export function createPlayersRouter(client: Queryable = getServerPool()): Expres
   router.get('/:id', async (req, res) => {
     try {
       const playerId = playerIdSchema.parse(req.params.id);
-      const players = await readSquadBuilderPlayers(client);
+      const players = await readPlayers();
       if (players.length === 0) return sendMissingPlayerData(res);
 
       const player = players.find(candidate => candidate.id === playerId);

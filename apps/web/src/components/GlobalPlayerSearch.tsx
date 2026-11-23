@@ -50,7 +50,7 @@ export default function GlobalPlayerSearch() {
         setOpen(false);
       }
     }}>
-      <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-slate-400" aria-hidden="true" />
+      <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-white/55" aria-hidden="true" />
       <input ref={input} className="header-search" type="search" aria-label="Find a player" placeholder="Find a player"
         autoComplete="off" maxLength={100} value={query}
         onFocus={() => setOpen(true)} onChange={event => { setQuery(event.target.value); setOpen(true); setResult(undefined); }}
@@ -62,26 +62,26 @@ export default function GlobalPlayerSearch() {
         }}
       />
       {query && (
-        <button type="button" className="absolute inset-y-0 right-0 px-3 text-slate-300" aria-label="Clear player search" onClick={() => {
+        <button type="button" className="absolute inset-y-0 right-0 px-3 text-white/70 hover:text-white" aria-label="Clear player search" onClick={() => {
           input.current?.focus();
           clear();
         }}><X className="h-4 w-4" aria-hidden="true" /></button>
       )}
       {open && trimmed.length >= 2 && (
-        <div className="absolute right-0 top-full z-30 mt-2 w-72 max-w-[calc(100vw-2rem)] rounded-lg border border-slate-200 bg-white shadow-lg">
+        <div className="absolute right-0 top-full z-30 mt-2 w-72 max-w-[calc(100vw-2rem)] rounded-md border border-line-strong bg-paper-raised text-ink shadow-[0_12px_32px_-12px_rgb(21_33_28/0.35)]">
           {current?.players.length ? (
             <ul aria-label="Player search results" className="max-h-72 overflow-y-auto py-1">
               {current.players.map((player, index) => (
                 <li key={player.id}>
                   <Link ref={index === 0 ? firstResult : undefined} to={`/player/${player.id}`} onClick={clear}
-                    className="block px-4 py-2.5 text-sm hover:bg-slate-100 focus-visible:bg-slate-100">
-                    <span className="block font-semibold text-slate-900">{player.name}</span>
-                    <span className="text-slate-600">{player.teamShort} · {player.pos} · {formatPrice(player.price)}</span>
+                    className="block border-b border-line px-4 py-2.5 text-sm last:border-b-0 hover:bg-paper-sunk focus-visible:bg-paper-sunk">
+                    <span className="block font-semibold text-ink">{player.name}</span>
+                    <span className="text-[13px] text-ink-soft">{player.teamShort} · {player.pos} · {formatPrice(player.price)}</span>
                   </Link>
                 </li>
               ))}
             </ul>
-          ) : <p role="status" className="p-4 text-sm text-slate-700">{current ? current.message ?? 'No matching players.' : 'Searching…'}</p>}
+          ) : <p role="status" className="p-4 text-sm text-ink-soft">{current ? current.message ?? 'No matching players.' : 'Searching…'}</p>}
         </div>
       )}
     </div>

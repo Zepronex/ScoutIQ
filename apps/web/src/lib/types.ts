@@ -115,6 +115,7 @@ export type PlayerPrediction = {
   id?: number;
   playerId: number;
   playerName: string;
+  shortName?: string;
   position: Pos;
   teamId: number;
   teamName?: string;
@@ -127,6 +128,7 @@ export type PlayerPrediction = {
   targetGameweekId?: number;
   fixtureId?: number | null;
   fixtureCount?: number;
+  opponents?: string[];
   availability?: PlayerAvailability;
   displayScore?: OptimizerDisplayScore;
 };
@@ -323,6 +325,7 @@ export type EvaluationRunSummary = {
   predictionCount: number;
   mae: EvaluationMetricComparison;
   rmse: EvaluationMetricComparison;
+  byPosition: Array<{ position: Pos; count: number; mae: EvaluationMetricComparison; rmse: EvaluationMetricComparison }>;
   evaluatedGameweeks: number[];
   skippedGameweeks: number[];
   evaluatedGameweekCount: number;

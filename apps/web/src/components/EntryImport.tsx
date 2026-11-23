@@ -42,25 +42,28 @@ export default function EntryImport({ onImport, replacing }: { onImport: (squad:
   };
 
   return (
-    <details className="card">
-      <summary className="cursor-pointer font-semibold">Import public FPL picks</summary>
-      <div className="mt-3 space-y-3">
-        <p className="max-w-2xl text-sm text-slate-600">
-          Open Points in Fantasy Premier League and copy the number after <code className="rounded bg-slate-100 px-1">/entry/</code> in the address.
+    <details className="group rounded-md border border-line bg-paper-raised">
+      <summary className="flex items-center justify-between gap-3 px-4 py-2.5 text-sm font-semibold marker:content-['']">
+        <span>Import public FPL picks</span>
+        <span className="text-ink-faint transition-transform group-open:rotate-45" aria-hidden="true">+</span>
+      </summary>
+      <div className="space-y-3 border-t border-line px-4 py-4">
+        <p className="max-w-2xl text-sm text-ink-soft">
+          Open Points in Fantasy Premier League and copy the number after <code className="rounded bg-paper-sunk px-1 text-[13px]">/entry/</code> in the address.
           Import uses the latest published deadline. Update any moves since then and enter your current bank and selling prices.
         </p>
         <form className="flex flex-wrap items-end gap-2" onSubmit={submit} noValidate>
-          <label className="block min-w-0 text-sm font-semibold">FPL team ID
-            <input type="text" className="input-field mt-1" inputMode="numeric" autoComplete="off" maxLength={12}
+          <label className="field-label min-w-0">FPL team ID
+            <input type="text" className="input-field mt-1 w-40" inputMode="numeric" autoComplete="off" maxLength={12}
               value={entry} disabled={pending} onChange={event => {
                 setEntry(event.target.value); setError(''); setPreview(undefined); setLoaded('');
               }} />
           </label>
           <button type="submit" className="btn-secondary" disabled={pending}>{pending ? 'Looking up picks…' : 'Look up picks'}</button>
         </form>
-        {error && <p role="alert" className="text-sm text-red-800">{error}</p>}
+        {error && <p role="alert" className="text-sm font-medium text-clay">{error}</p>}
         {preview && (
-          <div className="space-y-3 rounded-lg bg-slate-100 p-4">
+          <div className="panel-sunk space-y-3">
             <p role="status" className="text-sm font-semibold">15 picks from Gameweek {preview.gameweekId}{preview.season ? ` · ${preview.season}` : ''}</p>
             {replacing && <p className="text-sm">Using these picks replaces your saved squad and finance inputs.</p>}
             <div className="flex flex-wrap gap-2">
@@ -74,7 +77,7 @@ export default function EntryImport({ onImport, replacing }: { onImport: (squad:
             </div>
           </div>
         )}
-        {loaded && <p role="status" className="text-sm font-semibold text-fpl-green-dark">{loaded}</p>}
+        {loaded && <p role="status" className="text-sm font-semibold text-pitch-turf">{loaded}</p>}
       </div>
     </details>
   );

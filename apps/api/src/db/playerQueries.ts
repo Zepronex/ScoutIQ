@@ -92,10 +92,10 @@ export async function readBlankGameweekCandidates(
   client: Queryable, snapshotId: number, gameweekId: number, runId: number
 ): Promise<PlayerCandidate[]> {
   const { rows } = await client.query<{
-    id: number; display_name: string; team_id: number; short_name: string; name: string;
+    id: number; display_name: string; web_name: string | null; team_id: number; short_name: string; name: string;
     position: Pos; price: number;
   }>(`
-    SELECT p.id, p.display_name, p.team_id, t.short_name, t.name, p.position, p.now_cost::float8 AS price
+    SELECT p.id, p.display_name, p.web_name, p.team_id, t.short_name, t.name, p.position, p.now_cost::float8 AS price
     FROM players p
     JOIN teams t ON t.id = p.team_id AND t.ingestion_run_id = p.ingestion_run_id
     WHERE p.ingestion_run_id = $1 AND NOT EXISTS (
@@ -107,6 +107,7 @@ export async function readBlankGameweekCandidates(
   return rows.map(row => ({
     playerId: row.id,
     playerName: row.display_name,
+    ...(row.web_name ? { shortName: row.web_name } : {}),
     teamId: row.team_id,
     teamName: row.name,
     teamShortName: row.short_name,

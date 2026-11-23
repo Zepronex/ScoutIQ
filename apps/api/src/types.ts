@@ -107,6 +107,8 @@ export type PlayerPrediction = {
   predictionRunId: number;
   playerId: number;
   playerName: string;
+  /** The short name FPL shows on its own pitch view, such as "B.Fernandes". */
+  playerShortName?: string;
   position: Pos;
   teamId: number;
   teamName: string;
@@ -173,6 +175,7 @@ export type EvaluationRunSummary = {
   predictionCount: number;
   mae: EvaluationMetricComparison;
   rmse: EvaluationMetricComparison;
+  byPosition: Array<{ position: Pos; count: number; mae: EvaluationMetricComparison; rmse: EvaluationMetricComparison }>;
   evaluatedGameweeks: number[];
   skippedGameweeks: number[];
   evaluatedGameweekCount: number;

@@ -28,6 +28,7 @@ const OptimizerDisplayScoreSchema = z.object({
 export const PlayerCandidateSchema = z.object({
   playerId: PositiveIdSchema,
   playerName: NameSchema(100),
+  shortName: NameSchema(60).optional(),
   position: PositionSchema,
   teamId: PositiveIdSchema,
   teamName: NameSchema(100).optional(),

@@ -3,7 +3,7 @@ import { Link, useParams } from 'react-router-dom';
 import axios from 'axios';
 import { EnrichedPlayer } from '../lib/types';
 import { apiClient, apiErrorMessage } from '../lib/api';
-import { formatPrice, formatPoints, predictionAvailability } from '../lib/format';
+import { formatOnePlace, formatPrice, formatXp, positionNames, predictionAvailability } from '../lib/format';
 import PlayerStats from '../components/PlayerStats';
 import ErrorMessage from '../components/ErrorMessage';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -37,10 +37,11 @@ export default function PlayerDetailPage({ squadState, planning }: { squadState:
 
   const player = loaded?.id === playerId ? loaded.player : undefined;
   if (!validId || (loaded?.id === playerId && loaded.missing)) {
-    return <div className="card">
-      <h1 className="page-title">Player not found</h1>
-      <p className="mt-2 text-slate-600">Search the current FPL player list or return to the rankings.</p>
-      <Link className="text-link mt-4 inline-block" to="/top-players">Browse player projections</Link>
+    return <div className="py-10">
+      <p className="eyebrow">Error 404</p>
+      <h1 className="page-title mt-3">Player not found</h1>
+      <p className="page-lede">Search the current FPL player list or return to the rankings.</p>
+      <Link className="btn-dark mt-6" to="/top-players">Browse player projections</Link>
     </div>;
   }
   if (loaded?.id === playerId && loaded.error) return <ErrorMessage message={loaded.error} action={{ label: 'Retry player', onClick: () => setRetry(value => value + 1) }} />;
@@ -50,35 +51,51 @@ export default function PlayerDetailPage({ squadState, planning }: { squadState:
   const projection = planning.data?.players.find(row => row.playerId === playerId);
   const week = planning.data?.gameweek;
   const draftIneligible = squadState.squad.mode !== 'existing' && player.status === 'u';
+  const ranked = projection && planning.data
+    ? planning.data.players.filter(row => row.position === projection.position && row.predictedPoints > projection.predictedPoints).length + 1
+    : null;
+  const flagged = player.status !== 'a';
   return (
-    <div className="space-y-5">
-      <div className="flex flex-wrap gap-4 text-sm">
+    <div className="space-y-8">
+      <nav aria-label="Breadcrumb" className="flex flex-wrap gap-x-5 gap-y-1 text-sm">
         <Link to="/top-players" className="text-link">Player projections</Link>
         <Link to="/squad" className="text-link">Your squad</Link>
-      </div>
-      <section className="card flex flex-wrap items-start justify-between gap-5">
+      </nav>
+      <section className="grid gap-8 border-b border-ink pb-8 md:grid-cols-[minmax(0,1fr)_auto] md:items-end">
         <div className="min-w-0">
-          <p className="text-sm font-semibold text-fpl-green-dark">{player.teamShort} · {player.pos}</p>
-          <h1 className="page-title mt-1 break-words">{player.name}</h1>
-          <p className="mt-2 text-slate-600">{formatPrice(player.price)} · {statusLabels[player.status] ?? 'Availability unknown'}</p>
-          <button type="button" className="btn-primary mt-4" disabled={selected || draftIneligible} onClick={() => squadState.addPlayer(player)}>
+          <p className="eyebrow">{player.teamShort} · {positionNames[player.pos].replace(/s$/, '')}</p>
+          <h1 className="page-title mt-3 break-words">{player.name}</h1>
+          <p className="mt-3 text-ink-soft">
+            {formatPrice(player.price)} · <span className={flagged ? 'font-semibold text-clay' : undefined}>{statusLabels[player.status] ?? 'Availability unknown'}</span>
+            {' · '}owned by {formatOnePlace(player.ownership)}%
+          </p>
+          <button type="button" className="btn-primary mt-5" disabled={selected || draftIneligible} onClick={() => squadState.addPlayer(player)}>
             {selected ? 'In your squad' : draftIneligible ? 'Unavailable for a new draft' : 'Add to squad'}
           </button>
         </div>
-        <div className="rounded-lg bg-slate-100 p-4">
-          <h2 className="text-sm font-semibold text-slate-700">{week ? `Gameweek ${week.id} projection` : 'Gameweek projection'}</h2>
+        <div className="md:min-w-56 md:border-l md:border-line md:pl-8 md:text-right">
+          <h2 className="eyebrow">{week ? `Gameweek ${week.id} projection` : 'Gameweek projection'}</h2>
           {projection ? <>
-            <p className="mt-1 text-3xl font-bold tabular-nums text-fpl-dark">{formatPoints(projection.predictedPoints)} <span className="text-sm">pts</span></p>
-            <p className="mt-1 text-sm text-slate-600">{predictionAvailability(projection)}</p>
-          </> : <p className="mt-1 text-sm text-slate-600">{planning.loading ? 'Loading projection…' : 'Projection unavailable'}</p>}
+            <p className="figure mt-2 text-6xl leading-none text-ink">{formatXp(projection.predictedPoints)} <span className="text-lg font-semibold tracking-normal text-ink-soft">pts</span></p>
+            <p className="mt-2 text-sm text-ink-soft">
+              {projection.opponents?.length ? `v ${projection.opponents.join(', ')} · ` : ''}{predictionAvailability(projection)}
+            </p>
+            {ranked && projection.fixtureCount !== 0 && <p className="mt-0.5 text-[13px] text-ink-faint">Ranked {ordinal(ranked)} among {positionNames[projection.position].toLowerCase()}</p>}
+          </> : <p className="mt-2 text-sm text-ink-soft">{planning.loading ? 'Loading projection…' : 'Projection unavailable'}</p>}
         </div>
       </section>
-      <GameweekStatus planning={planning} />
-      {squadState.error && <ErrorMessage message={squadState.error} onDismiss={squadState.clearError} />}
-      <section>
-        <h2 className="mb-3 text-lg font-semibold">FPL season statistics</h2>
+      {squadState.error && <ErrorMessage title="That change was not made" message={squadState.error} onDismiss={squadState.clearError} />}
+      <section aria-labelledby="season-statistics">
+        <h2 id="season-statistics" className="section-title">FPL season statistics</h2>
         <PlayerStats player={player} />
       </section>
+      <GameweekStatus planning={planning} />
     </div>
   );
+}
+
+function ordinal(value: number): string {
+  const tens = value % 100;
+  const suffix = tens >= 11 && tens <= 13 ? 'th' : ['th', 'st', 'nd', 'rd'][value % 10] ?? 'th';
+  return `${value}${suffix}`;
 }

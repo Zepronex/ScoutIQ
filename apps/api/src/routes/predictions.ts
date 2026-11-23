@@ -39,6 +39,8 @@ export function createPredictionsRouter(client: Queryable = getServerPool()): Ex
       const blanks = await readBlankGameweekCandidates(client, window.snapshotId, window.gameweek.id, window.gameweek.runId);
       players.push(...blanks.filter(player => !projectedIds.has(player.playerId)));
     }
+    const opponents = window ? await readOpponentLabels(client, window.snapshotId, window.gameweek.id) : new Map();
+    for (const player of players) player.opponents = opponents.get(player.teamId) ?? [];
     return {
       source: process.env.SCOUTIQ_DATA_MODE === 'sample' ? 'sample' : 'fpl',
       gameweek: window ? { ...window.gameweek, runId: players.length ? window.gameweek.runId : null } : null,
@@ -147,6 +149,25 @@ export function createPredictionsRouter(client: Queryable = getServerPool()): Ex
   });
 
   return router;
+}
+
+/** Maps each club to its fixtures in the gameweek, such as "ARS (A)". */
+async function readOpponentLabels(client: Queryable, snapshotId: number, gameweekId: number): Promise<Map<number, string[]>> {
+  const { rows } = await client.query<{ team_h_id: number; team_a_id: number; home: string; away: string }>(`
+    SELECT f.team_h_id, f.team_a_id, h.short_name AS home, a.short_name AS away
+    FROM fixtures f
+    JOIN teams h ON h.id = f.team_h_id
+    JOIN teams a ON a.id = f.team_a_id
+    WHERE f.ingestion_run_id = $1 AND f.event_id = $2 AND NOT f.started AND NOT f.finished
+    ORDER BY f.kickoff_time NULLS LAST, f.id
+  `, [snapshotId, gameweekId]);
+  const labels = new Map<number, string[]>();
+  for (const row of rows) {
+    if (!row.home || !row.away) continue;
+    labels.set(row.team_h_id, [...(labels.get(row.team_h_id) ?? []), `${row.away} (H)`]);
+    labels.set(row.team_a_id, [...(labels.get(row.team_a_id) ?? []), `${row.home} (A)`]);
+  }
+  return labels;
 }
 
 function handleRouteError(res: Response, error: unknown): void {

@@ -23,6 +23,7 @@ export function predictionsToCandidates(predictions: readonly PlayerPrediction[]
       candidate: {
         playerId: prediction.playerId,
         playerName: prediction.playerName,
+        ...(prediction.playerShortName ? { shortName: prediction.playerShortName } : {}),
         position: prediction.position,
         teamId: prediction.teamId,
         teamName: prediction.teamName,

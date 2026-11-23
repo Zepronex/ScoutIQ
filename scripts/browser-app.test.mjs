@@ -168,7 +168,8 @@ test('handles search races, unknown players and a catalog rate limit without los
   await search.fill('older');
   await older;
   await search.fill('newer');
-  await page.getByRole('link', { name: new RegExp(second.playerName.replace(/[.*+?^$${}()|[\]\\]/g, '\\$&')) }).waitFor();
+  // The home page also ranks players, so look only inside the search results.
+  await page.getByRole('list', { name: 'Player search results' }).getByRole('link', { name: new RegExp(second.playerName.replace(/[.*+?^$${}()|[\]\\]/g, '\\$&')) }).waitFor();
   await delay(750);
   assert.equal(await page.getByRole('list', { name: 'Player search results' }).locator('a').first().getAttribute('href'), `/player/${second.playerId}`);
   await page.keyboard.press('ArrowDown');

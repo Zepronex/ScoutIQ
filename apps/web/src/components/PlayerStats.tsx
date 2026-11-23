@@ -1,97 +1,30 @@
 import { EnrichedPlayer } from '../lib/types';
-import { formatPrice, formatForm, formatXG, formatXA } from '../lib/format';
-import { TrendingUp, TrendingDown, Users, Target, Clock } from 'lucide-react';
+import { formatOnePlace } from '../lib/format';
 
-interface PlayerStatsProps {
-  player: EnrichedPlayer;
-}
+const twoPlaces = new Intl.NumberFormat('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-const PlayerStats = ({ player }: PlayerStatsProps) => {
+export default function PlayerStats({ player }: { player: EnrichedPlayer }) {
+  const stats: Array<{ label: string; value: string; note: string }> = [
+    { label: 'Form', value: formatOnePlace(player.form), note: 'Average points over the last 30 days' },
+    { label: 'Points per game', value: formatOnePlace(player.avgPoints), note: 'Across matches played this season' },
+    { label: 'xG per 90', value: twoPlaces.format(player.xg90), note: 'Expected goals per 90 minutes' },
+    { label: 'xA per 90', value: twoPlaces.format(player.xa90), note: 'Expected assists per 90 minutes' },
+    { label: 'Minutes per start', value: player.expMin > 0 ? formatOnePlace(player.expMin) : '—', note: 'Season average' },
+    {
+      label: 'Next three fixtures',
+      value: player.next3Ease > 0 ? formatOnePlace(player.next3Ease) : '—',
+      note: 'Average FPL difficulty, 1 easiest to 5 hardest'
+    }
+  ];
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-      {/* Basic Info */}
-      <div className="bg-white rounded-lg p-6 shadow-sm">
-        <h3 className="text-lg font-semibold mb-4 text-gray-800">Basic Information</h3>
-        <div className="space-y-3">
-          <div className="flex justify-between">
-            <span className="text-gray-600">Team:</span>
-            <span className="font-medium">{player.teamShort}</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-gray-600">Position:</span>
-            <span className="font-medium">{player.pos}</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-gray-600">Price:</span>
-            <span className="font-medium text-fpl-dark">{formatPrice(player.price)}</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-gray-600">Ownership:</span>
-            <span className="font-medium">{player.ownership}%</span>
-          </div>
+    <dl className="mt-4 grid grid-cols-2 border-t border-line md:grid-cols-3">
+      {stats.map(stat => (
+        <div key={stat.label} className="border-b border-line py-4 pr-4">
+          <dt className="eyebrow">{stat.label}</dt>
+          <dd className="figure mt-2 text-3xl leading-none">{stat.value}</dd>
+          <dd className="mt-1.5 text-[13px] text-ink-faint">{stat.note}</dd>
         </div>
-      </div>
-
-      {/* Performance Stats */}
-      <div className="bg-white rounded-lg p-6 shadow-sm">
-        <h3 className="text-lg font-semibold mb-4 text-gray-800">Performance</h3>
-        <div className="space-y-3">
-          <div className="flex justify-between items-center">
-            <span className="text-gray-600">Form:</span>
-            <div className="flex items-center space-x-1">
-              {player.form >= 0 ? (
-                <TrendingUp className="w-4 h-4 text-green-500" />
-              ) : (
-                <TrendingDown className="w-4 h-4 text-red-500" />
-              )}
-              <span className="font-medium">{formatForm(player.form)}</span>
-            </div>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-gray-600">Avg Points:</span>
-            <span className="font-medium">{player.avgPoints.toFixed(1)}</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-gray-600">Value:</span>
-            <span className="font-medium">{player.value.toFixed(2)}</span>
-          </div>
-        </div>
-      </div>
-
-      {/* Advanced Stats */}
-      <div className="bg-white rounded-lg p-6 shadow-sm">
-        <h3 className="text-lg font-semibold mb-4 text-gray-800">Advanced Stats</h3>
-        <div className="space-y-3">
-          <div className="flex justify-between">
-            <span className="text-gray-600 flex items-center">
-              <Target className="w-4 h-4 mr-1" />
-              xG/90:
-            </span>
-            <span className="font-medium">{formatXG(player.xg90)}</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-gray-600 flex items-center">
-              <Users className="w-4 h-4 mr-1" />
-              xA/90:
-            </span>
-            <span className="font-medium">{formatXA(player.xa90)}</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-gray-600 flex items-center">
-              <Clock className="w-4 h-4 mr-1" />
-              Season minutes per start:
-            </span>
-            <span className="font-medium">{player.expMin.toFixed(1)}</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-gray-600">Next 3 fixture difficulty:</span>
-            <span className="font-medium">{player.next3Ease > 0 ? player.next3Ease.toFixed(1) : 'Unavailable'}</span>
-          </div>
-        </div>
-      </div>
-    </div>
+      ))}
+    </dl>
   );
-};
-
-export default PlayerStats;
-
+}

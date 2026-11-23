@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { SquadAnalyzer } from '../lib/squad';
 import { ScoringService } from '../lib/scoring';
 import { AnalysisWeights, EnrichedPlayer, Squad, SquadSlot } from '../types';
-import { createDbPool, Queryable } from '../db/client';
+import { getServerPool, Queryable } from '../db/client';
 import {
   PLAYER_CANDIDATE_REQUIRED_COMMANDS,
   readSquadBuilderPlayers
@@ -12,15 +12,19 @@ import {
 // Validation schemas
 const squadSlotSchema = z.object({
   id: z.number().int().positive(),
+  code: z.number().int().positive().nullable().optional(),
+  name: z.string().optional(),
   pos: z.enum(['GK', 'DEF', 'MID', 'FWD']),
-  price: z.number().positive().max(15),
-  teamId: z.number().int().positive().optional()
+  price: z.number().finite().nonnegative(),
+  teamId: z.number().int().positive().optional(),
+  sellingPrice: z.number().finite().positive().optional()
 });
 
 const squadSchema = z.object({
   startingXI: z.array(squadSlotSchema).length(11),
   bench: z.array(squadSlotSchema).length(4),
-  bank: z.number().min(0).max(100)
+  bank: z.number().finite().min(0).max(100),
+  mode: z.enum(['draft', 'existing']).optional()
 });
 
 const weightsSchema = z.object({
@@ -36,33 +40,34 @@ const weightsSchema = z.object({
 
 const analyzeRequestSchema = z.object({
   squad: squadSchema,
-  weights: weightsSchema.optional()
+  weights: weightsSchema.optional(),
+  verifySavedNames: z.boolean().optional()
 });
 
-export function createAnalyzeRouter(client: Queryable = createDbPool()): ExpressRouter {
+export function createAnalyzeRouter(client: Queryable = getServerPool()): ExpressRouter {
   const router: ExpressRouter = Router();
 
   // POST /api/analyze - Analyze squad and get suggestions
   router.post('/', async (req, res) => {
     try {
-      const { squad, weights } = analyzeRequestSchema.parse(req.body);
+      const { squad, weights, verifySavedNames } = analyzeRequestSchema.parse(req.body);
       const playerPool = await readSquadBuilderPlayers(client);
 
       if (playerPool.length === 0) {
         return res.status(503).json({
           success: false,
-          error: 'Prediction data is missing. Run the prediction pipeline and load predictions into PostgreSQL.',
+          error: 'The current FPL player list is unavailable.',
           requiredCommands: PLAYER_CANDIDATE_REQUIRED_COMMANDS
         });
       }
 
       const enrichedSquad = enrichSquadFromPlayerPool(squad, playerPool);
-      const unknownPlayerIds = getUnknownPlayerIds(squad, playerPool);
+      const unknownPlayerIds = getUnknownPlayerIds(squad, playerPool, verifySavedNames);
 
       if (unknownPlayerIds.length > 0) {
         return res.status(400).json({
           success: false,
-          error: 'Some squad players do not have prediction rows. Re-run the prediction pipeline and reload predictions into PostgreSQL.',
+          error: 'Some saved players are missing from the current FPL player list. Edit your squad and replace those players.',
           details: { playerIds: unknownPlayerIds },
           requiredCommands: PLAYER_CANDIDATE_REQUIRED_COMMANDS
         });
@@ -70,6 +75,14 @@ export function createAnalyzeRouter(client: Queryable = createDbPool()): Express
 
       // Validate squad formation and constraints after enrichment from authoritative local data.
       const validation = SquadAnalyzer.validateSquad(enrichedSquad);
+      const unavailable = unavailableDraftPlayers(squad, playerPool);
+      if (unavailable.length) {
+        return res.status(400).json({
+          success: false,
+          error: 'Replace unavailable players before using this squad as a new draft.',
+          details: { playerIds: unavailable }
+        });
+      }
       if (!validation.valid) {
         const errors = validation.errors.length > 0
           ? validation.errors
@@ -108,13 +121,13 @@ export function createAnalyzeRouter(client: Queryable = createDbPool()): Express
         return res.status(400).json({
           success: false,
           error: 'Invalid request data',
-          details: error.errors
+          details: error.issues
         });
       }
 
       res.status(503).json({
         success: false,
-        error: 'Could not load local prediction data for squad analysis. Start PostgreSQL and run the documented data pipeline.',
+        error: 'Could not load squad analysis. Try again shortly.',
         requiredCommands: PLAYER_CANDIDATE_REQUIRED_COMMANDS
       });
     }
@@ -129,7 +142,7 @@ export function createAnalyzeRouter(client: Queryable = createDbPool()): Express
       if (playerPool.length === 0) {
         return res.status(503).json({
           success: false,
-          error: 'Prediction data is missing. Run the prediction pipeline and load predictions into PostgreSQL.',
+          error: 'The current FPL player list is unavailable.',
           requiredCommands: PLAYER_CANDIDATE_REQUIRED_COMMANDS
         });
       }
@@ -138,7 +151,7 @@ export function createAnalyzeRouter(client: Queryable = createDbPool()): Express
       if (unknownPlayerIds.length > 0) {
         return res.status(400).json({
           success: false,
-          error: 'Selected player data could not be found in prediction rows. Reload data and try again.',
+          error: 'Some saved players are missing from the current FPL player list. Edit your squad and replace those players.',
           details: { playerIds: unknownPlayerIds },
           requiredCommands: PLAYER_CANDIDATE_REQUIRED_COMMANDS
         });
@@ -146,12 +159,15 @@ export function createAnalyzeRouter(client: Queryable = createDbPool()): Express
 
       const enrichedSquad = enrichSquadFromPlayerPool(squad, playerPool);
       const validation = SquadAnalyzer.validateSquad(enrichedSquad);
+      const unavailable = unavailableDraftPlayers(squad, playerPool);
 
       res.json({
         success: true,
         data: {
-          valid: validation.valid,
-          errors: validation.errors
+          valid: validation.valid && unavailable.length === 0,
+          errors: unavailable.length
+            ? [...validation.errors, 'Replace unavailable players before using this squad as a new draft.']
+            : validation.errors
         }
       });
     } catch (error) {
@@ -159,13 +175,13 @@ export function createAnalyzeRouter(client: Queryable = createDbPool()): Express
         return res.status(400).json({
           success: false,
           error: 'Invalid request data',
-          details: error.errors
+          details: error.issues
         });
       }
 
       res.status(503).json({
         success: false,
-        error: 'Could not load local prediction data for squad validation. Start PostgreSQL and run the documented data pipeline.',
+        error: 'Could not validate the squad. Try again shortly.',
         requiredCommands: PLAYER_CANDIDATE_REQUIRED_COMMANDS
       });
     }
@@ -203,9 +219,11 @@ function enrichSquadFromPlayerPool(squad: Squad, playerPool: EnrichedPlayer[]): 
   const playerMap = new Map(playerPool.map(player => [player.id, player]));
   const startingXI = squad.startingXI.map(slot => enrichSlot(slot, playerMap));
   const bench = squad.bench.map(slot => enrichSlot(slot, playerMap));
-  const bank = roundMoney(100 - calculateSquadCost([...startingXI, ...bench]));
+  const bank = squad.mode === 'existing' ? squad.bank
+    : roundMoney(100 - calculateSquadCost([...startingXI, ...bench]));
 
   return {
+    ...squad,
     startingXI,
     bench,
     bank
@@ -217,7 +235,9 @@ function enrichSlot(slot: SquadSlot, playerMap: Map<number, EnrichedPlayer>): Sq
   if (!player) return slot;
 
   return {
+    ...slot,
     id: player.id,
+    code: player.code,
     pos: player.pos,
     price: player.price,
     name: player.name,
@@ -226,12 +246,22 @@ function enrichSlot(slot: SquadSlot, playerMap: Map<number, EnrichedPlayer>): Sq
   };
 }
 
-function getUnknownPlayerIds(squad: Squad, playerPool: EnrichedPlayer[]): number[] {
-  const knownPlayerIds = new Set(playerPool.map(player => player.id));
-  const selectedPlayerIds = [...squad.startingXI, ...squad.bench].map(slot => slot.id);
+function getUnknownPlayerIds(squad: Squad, playerPool: EnrichedPlayer[], verifySavedNames = false): number[] {
+  const playerById = new Map(playerPool.map(player => [player.id, player]));
+  const missingPlayers = [...squad.startingXI, ...squad.bench].filter(slot => {
+    const player = playerById.get(slot.id);
+    return !player || (slot.code != null && slot.code !== player.code) ||
+      (verifySavedNames && slot.code == null && slot.name !== undefined && slot.name !== player.name);
+  });
 
-  return [...new Set(selectedPlayerIds.filter(playerId => !knownPlayerIds.has(playerId)))]
+  return [...new Set(missingPlayers.map(slot => slot.id))]
     .sort((left, right) => left - right);
+}
+
+function unavailableDraftPlayers(squad: Squad, pool: EnrichedPlayer[]): number[] {
+  if (squad.mode === 'existing') return [];
+  const selected = new Set([...squad.startingXI, ...squad.bench].map(slot => slot.id));
+  return pool.filter(player => selected.has(player.id) && player.status === 'u').map(player => player.id);
 }
 
 function normalizeWeights(weights: AnalysisWeights): AnalysisWeights {

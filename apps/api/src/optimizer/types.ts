@@ -31,18 +31,21 @@ export type PlayerCandidate = {
   predictionRunId?: number;
   targetGameweekId?: number;
   fixtureId?: number | null;
+  fixtureCount?: number;
   availability?: PlayerAvailability;
   displayScore?: OptimizerDisplayScore;
 };
 
 export type SquadSlot = PlayerCandidate & {
   slotIndex: number;
+  sellingPrice?: number;
 };
 
 export type Squad = {
   slots: SquadSlot[];
   budget: number;
   bank: number;
+  existingSquad?: boolean;
 };
 
 export type ConstraintViolationCode =

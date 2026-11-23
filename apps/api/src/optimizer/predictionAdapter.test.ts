@@ -15,7 +15,17 @@ describe('prediction optimizer adapter', () => {
     assert.equal(candidates[0].playerName, 'Forward A');
     assert.equal(candidates[0].predictedPoints, 10);
     assert.equal(candidates[0].fixtureId, null);
+    assert.equal(candidates[0].fixtureCount, 2);
     assert.equal(candidates[1].playerName, 'Mid A');
+  });
+
+  it('keeps an unavailable player in an owned squad with zero projected points', () => {
+    const [candidate] = predictionsToCandidates([
+      { ...predictionFixture(1, 'Forward A', 'FWD', 6, 101), chanceOfPlayingNextRound: 0 }
+    ]);
+    assert.equal(candidate.fixtureCount, 1);
+    assert.equal(candidate.predictedPoints, 0);
+    assert.equal(candidate.availability, 'unavailable');
   });
 
   it('maps FPL status fields into optimizer availability', () => {

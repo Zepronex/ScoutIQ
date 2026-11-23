@@ -4,7 +4,7 @@ const PositionSchema = z.enum(['GK', 'DEF', 'MID', 'FWD']);
 const AvailabilitySchema = z.enum(['available', 'doubtful', 'unavailable', 'unknown']);
 const PositiveIdSchema = z.coerce.number().int().positive();
 const MoneySchema = z.coerce.number().nonnegative();
-const ConstraintValueSchema = z.union([z.number(), z.string(), z.record(z.number())]);
+const ConstraintValueSchema = z.union([z.number(), z.string(), z.record(z.string(), z.number())]);
 const OptimizerDisplayScoreSchema = z.object({
   rawExpectedPoints: z.number().nullable(),
   contextualScoreOutOf10: z.number().nullable(),
@@ -24,18 +24,21 @@ export const PlayerCandidateSchema = z.object({
   predictionRunId: PositiveIdSchema.optional(),
   targetGameweekId: PositiveIdSchema.optional(),
   fixtureId: PositiveIdSchema.nullable().optional(),
+  fixtureCount: z.number().int().nonnegative().optional(),
   availability: AvailabilitySchema.optional(),
   displayScore: OptimizerDisplayScoreSchema.optional()
 }).strict();
 
 export const SquadSlotSchema = PlayerCandidateSchema.extend({
-  slotIndex: z.coerce.number().int().min(0)
+  slotIndex: z.coerce.number().int().min(0),
+  sellingPrice: MoneySchema.optional()
 }).strict();
 
 export const SquadSchema = z.object({
   slots: z.array(SquadSlotSchema).length(15),
   budget: MoneySchema,
-  bank: MoneySchema
+  bank: MoneySchema,
+  existingSquad: z.boolean().optional()
 }).strict();
 
 export const ConstraintCheckSchema = z.object({

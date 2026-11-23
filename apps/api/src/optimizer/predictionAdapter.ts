@@ -13,9 +13,7 @@ export function predictionsToCandidates(predictions: readonly PlayerPrediction[]
   for (const prediction of predictions) {
     const existing = grouped.get(prediction.playerId);
     if (existing) {
-      existing.candidate.predictedPoints = roundPoints(
-        existing.candidate.predictedPoints + prediction.predictedPoints
-      );
+      existing.candidate.predictedPoints += prediction.predictedPoints;
       if (prediction.fixtureId !== null) existing.fixtureIds.push(prediction.fixtureId);
       existing.candidate.fixtureId = existing.fixtureIds.length === 1 ? existing.fixtureIds[0] : null;
       continue;
@@ -41,7 +39,11 @@ export function predictionsToCandidates(predictions: readonly PlayerPrediction[]
   }
 
   return [...grouped.values()]
-    .map(value => value.candidate)
+    .map(({ candidate, fixtureIds }) => ({
+      ...candidate,
+      fixtureCount: fixtureIds.length,
+      predictedPoints: candidate.availability === 'unavailable' ? 0 : roundPoints(candidate.predictedPoints)
+    }))
     .sort(comparePlayerCandidates);
 }
 

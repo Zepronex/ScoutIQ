@@ -27,8 +27,10 @@ type FormationCandidate = {
   constraintSummary: ConstraintValidationResult;
 };
 
+const AVAILABILITY_ORDER = { available: 0, doubtful: 1, unknown: 2, unavailable: 3 };
+
 export function optimizeStartingXi(squad: Squad): StartingXI {
-  const squadValidation = validateSquad(squad);
+  const squadValidation = validateSquad(squad, { allowExistingClubOverflow: true });
   if (!squadValidation.valid) {
     throw new OptimizerInputError('invalid_squad', squadValidation);
   }
@@ -57,6 +59,9 @@ export function comparePlayerCandidates(left: PlayerCandidate, right: PlayerCand
   if (right.predictedPoints !== left.predictedPoints) {
     return right.predictedPoints - left.predictedPoints;
   }
+
+  const availabilityDifference = AVAILABILITY_ORDER[left.availability ?? 'unknown'] - AVAILABILITY_ORDER[right.availability ?? 'unknown'];
+  if (availabilityDifference !== 0) return availabilityDifference;
 
   const nameComparison = left.playerName.localeCompare(right.playerName);
   if (nameComparison !== 0) return nameComparison;

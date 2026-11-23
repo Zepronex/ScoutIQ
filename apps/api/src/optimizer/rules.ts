@@ -67,7 +67,11 @@ export function countByTeam(players: readonly PlayerCandidate[]): Map<number, nu
 }
 
 export function calculateSquadCost(players: readonly PlayerCandidate[]): number {
-  return roundMoney(players.reduce((sum, player) => sum + player.price, 0));
+  return roundMoney(players.reduce((sum, player) => sum + getSellingPrice(player), 0));
+}
+
+export function getSellingPrice(player: PlayerCandidate & { sellingPrice?: number }): number {
+  return player.sellingPrice ?? player.price;
 }
 
 export function getFormation(starters: readonly PlayerCandidate[]): Formation | null {
@@ -76,7 +80,7 @@ export function getFormation(starters: readonly PlayerCandidate[]): Formation | 
   return Object.prototype.hasOwnProperty.call(VALID_FORMATIONS, formation) ? formation : null;
 }
 
-export function validateSquad(squad: Squad): ConstraintValidationResult {
+export function validateSquad(squad: Squad, options: { allowExistingClubOverflow?: boolean } = {}): ConstraintValidationResult {
   const checks: ConstraintCheck[] = [];
   const violations: ConstraintViolation[] = [];
   const players = squad.slots;
@@ -114,14 +118,16 @@ export function validateSquad(squad: Squad): ConstraintValidationResult {
   const overTeamLimit = [...countByTeam(players).entries()]
     .filter(([, count]) => count > FPL_RULES.maxPlayersPerTeam)
     .sort(([leftTeamId], [rightTeamId]) => leftTeamId - rightTeamId);
-  pushCheck(checks, violations, {
-    key: 'max_players_per_team',
-    passed: overTeamLimit.length === 0,
-    expected: FPL_RULES.maxPlayersPerTeam,
-    actual: overTeamLimit.length === 0 ? FPL_RULES.maxPlayersPerTeam : Math.max(...overTeamLimit.map(([, count]) => count)),
-    code: 'max_players_per_team',
-    teamId: overTeamLimit[0]?.[0]
-  });
+  if (!(squad.existingSquad && options.allowExistingClubOverflow && overTeamLimit.length > 0)) {
+    pushCheck(checks, violations, {
+      key: 'max_players_per_team',
+      passed: overTeamLimit.length === 0,
+      expected: FPL_RULES.maxPlayersPerTeam,
+      actual: overTeamLimit.length === 0 ? FPL_RULES.maxPlayersPerTeam : Math.max(...overTeamLimit.map(([, count]) => count)),
+      code: 'max_players_per_team',
+      teamId: overTeamLimit[0]?.[0]
+    });
+  }
 
   pushCheck(checks, violations, {
     key: 'budget',

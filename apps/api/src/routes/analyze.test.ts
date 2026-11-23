@@ -28,6 +28,10 @@ describe('analyze route', () => {
       assert.equal(response.body.data.results[0].player.name, 'Player 1');
       assert.equal(response.body.data.results[0].player.pos, 'GK');
       assert.equal(typeof response.body.data.averageScore, 'number');
+      const starters = response.body.data.results.slice(0, 11);
+      assert.equal(response.body.data.averageScore, Math.round(starters.reduce(
+        (sum: number, entry: { score: number }) => sum + entry.score, 0
+      ) / 11 * 100) / 100);
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -46,22 +50,32 @@ describe('analyze route', () => {
     assert.equal(response.body.data.bankLeft, 25);
   });
 
-  it('returns setup guidance when prediction-backed player data is missing', async () => {
+  it('returns setup guidance when the player catalog is missing', async () => {
     const response = await postAnalyze([], squadPayload());
 
     assert.equal(response.status, 503);
     assert.equal(response.body.success, false);
-    assert.match(response.body.error, /Prediction data is missing/);
+    assert.match(response.body.error, /FPL player list is unavailable/);
     assert.deepEqual(response.body.requiredCommands, PLAYER_CANDIDATE_REQUIRED_COMMANDS);
   });
 
-  it('returns a 400 with unknown player ids when selected players are not in prediction rows', async () => {
+  it('returns a 400 with unknown player IDs when selected players are absent from the current catalog', async () => {
     const response = await postAnalyze(candidateRowsFixture().filter(row => row.id !== 15), squadPayload());
 
     assert.equal(response.status, 400);
     assert.equal(response.body.success, false);
-    assert.match(response.body.error, /do not have prediction rows/);
+    assert.match(response.body.error, /missing from the current FPL player list/);
     assert.deepEqual(response.body.details.playerIds, [15]);
+  });
+
+  it('preserves the confirmed bank on an existing squad and accepts current prices above £15m', async () => {
+    const { squad } = squadPayload();
+    squad.startingXI[0].price = 15.8;
+    const rows = candidateRowsFixture().map(row => row.id === 1 ? { ...row, now_cost: 15.8 } : row);
+    const response = await postAnalyze(rows, { squad: { ...squad, mode: 'existing', bank: 0.7 } });
+    assert.equal(response.status, 200);
+    assert.equal(response.body.data.bankLeft, 0.7);
+    assert.equal(response.body.data.results[0].player.price, 15.8);
   });
 });
 

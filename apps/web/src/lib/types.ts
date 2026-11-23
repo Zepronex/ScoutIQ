@@ -115,6 +115,7 @@ export type PlayerPrediction = {
   id?: number;
   playerId: number;
   playerName: string;
+  shortName?: string;
   position: Pos;
   teamId: number;
   teamName?: string;

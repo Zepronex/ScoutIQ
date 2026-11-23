@@ -26,6 +26,7 @@ const FplMoneySchema = z.union([z.number(), z.string().regex(/^\d+(\.\d)?$/).tra
 const PlayerCandidateSchema = z.object({
   playerId: PositiveIdSchema,
   playerName: z.string().min(1).max(100),
+  shortName: z.string().min(1).max(60).optional(),
   position: PositionSchema,
   teamId: PositiveIdSchema,
   teamName: z.string().min(1).max(100).optional(),

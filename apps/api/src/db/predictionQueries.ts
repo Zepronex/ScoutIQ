@@ -126,6 +126,7 @@ type PlayerPredictionDbRow = {
   prediction_run_id: string;
   player_id: number;
   player_name: string;
+  player_short_name?: string | null;
   position: Pos;
   team_id: number;
   team_name: string;
@@ -461,6 +462,7 @@ function predictionSelectSql(): string {
       pp.prediction_run_id,
       pp.player_id,
       p.display_name AS player_name,
+      p.web_name AS player_short_name,
       p.position,
       p.team_id,
       t.name AS team_name,
@@ -513,6 +515,7 @@ export function toPlayerPrediction(row: PlayerPredictionDbRow): PlayerPrediction
     predictionRunId: Number(row.prediction_run_id),
     playerId: row.player_id,
     playerName: row.player_name,
+    ...(row.player_short_name ? { playerShortName: row.player_short_name } : {}),
     position: row.position,
     teamId: row.team_id,
     teamName: row.team_name,

@@ -22,6 +22,8 @@ export type OptimizerDisplayScore = {
 export type PlayerCandidate = {
   playerId: number;
   playerName: string;
+  /** Short display name for tight layouts. Falls back to playerName. */
+  shortName?: string;
   position: Pos;
   teamId: number;
   teamName?: string;

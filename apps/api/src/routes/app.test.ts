@@ -50,3 +50,44 @@ it('rejects invalid JSON and oversized bodies with public error envelopes', asyn
     await new Promise<void>(resolve => server.close(() => resolve()));
   }
 });
+
+it('ignores a forged client address when no proxy is trusted', async () => {
+  const server = createApp().listen(0, '127.0.0.1');
+  await new Promise<void>(resolve => server.once('listening', resolve));
+  try {
+    const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api/entries/import`;
+    const statuses: number[] = [];
+    for (let attempt = 0; attempt < 11; attempt += 1) {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': `203.0.113.${attempt}` },
+        body: JSON.stringify({ entryId: 'not-a-number' })
+      });
+      statuses.push(response.status);
+    }
+    assert.deepEqual(statuses.slice(0, 10), Array(10).fill(400));
+    assert.equal(statuses[10], 429);
+  } finally {
+    await new Promise<void>(resolve => server.close(() => resolve()));
+  }
+});
+
+it('sends security headers and allows only the configured browser origin', async () => {
+  const server = createApp().listen(0, '127.0.0.1');
+  await new Promise<void>(resolve => server.once('listening', resolve));
+  try {
+    const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api/health`;
+    const allowed = process.env.FRONTEND_URL || 'http://localhost:3000';
+    const response = await fetch(url, { headers: { Origin: 'https://attacker.example' } });
+    assert.equal(response.headers.get('access-control-allow-origin'), allowed);
+    assert.equal(response.headers.get('access-control-allow-credentials'), null);
+    assert.equal(response.headers.get('x-content-type-options'), 'nosniff');
+    assert.equal(response.headers.get('x-powered-by'), null);
+    assert.match(response.headers.get('content-security-policy') ?? '', /default-src 'self'/);
+    const missing = await fetch(url.replace('/health', '/does-not-exist'));
+    assert.equal(missing.status, 404);
+    assert.deepEqual(await missing.json(), { success: false, error: 'Endpoint not found' });
+  } finally {
+    await new Promise<void>(resolve => server.close(() => resolve()));
+  }
+});

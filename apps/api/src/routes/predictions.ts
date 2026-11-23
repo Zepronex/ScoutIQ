@@ -1,13 +1,16 @@
 import { Router, Response, type Router as ExpressRouter } from 'express';
 import { z } from 'zod';
-import { createDbPool, Queryable } from '../db/client';
+import { getServerPool, Queryable } from '../db/client';
 import {
   readGameweekPredictionSummary,
   readLatestPredictionSummary,
+  readPlanningPredictions,
+  readPlanningWindow,
   readPlayerPredictions,
   readTopPredictions
 } from '../db/predictionQueries';
-import { PLAYER_CANDIDATE_REQUIRED_COMMANDS } from '../db/playerQueries';
+import { PLAYER_CANDIDATE_REQUIRED_COMMANDS, readBlankGameweekCandidates } from '../db/playerQueries';
+import { predictionsToCandidates } from '../optimizer/predictionAdapter';
 
 const PositionSchema = z.enum(['GK', 'DEF', 'MID', 'FWD']);
 const PositiveIdSchema = z.coerce.number().int().positive();
@@ -18,8 +21,33 @@ const topPredictionsQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).optional().default(25)
 });
 
-export function createPredictionsRouter(client: Queryable = createDbPool()): ExpressRouter {
+export function createPredictionsRouter(client: Queryable = getServerPool()): ExpressRouter {
   const router: ExpressRouter = Router();
+
+  router.get('/planning', async (_req, res) => {
+    res.set('Cache-Control', 'no-store');
+    try {
+      const window = await readPlanningWindow(client);
+      const predictions = window ? await readPlanningPredictions(client, window) : [];
+      const players = predictionsToCandidates(predictions);
+      if (window && window.gameweek.runId !== null && players.length) {
+        const projectedIds = new Set(players.map(player => player.playerId));
+        const blanks = await readBlankGameweekCandidates(client, window.snapshotId, window.gameweek.id, window.gameweek.runId);
+        players.push(...blanks.filter(player => !projectedIds.has(player.playerId)));
+      }
+      res.json({
+        success: true,
+        data: {
+          source: process.env.SCOUTIQ_DATA_MODE === 'sample' ? 'sample' : 'fpl',
+          gameweek: window ? { ...window.gameweek, runId: players.length ? window.gameweek.runId : null } : null,
+          missingPlayerCount: window ? Math.max(0, window.playerCount - players.length) : 0,
+          players
+        }
+      });
+    } catch {
+      res.status(503).json({ success: false, error: 'Could not load the FPL schedule. Try again shortly.' });
+    }
+  });
 
   router.get('/latest', async (_req, res) => {
     try {
@@ -119,7 +147,7 @@ function handleRouteError(res: Response, error: unknown): void {
     res.status(400).json({
       success: false,
       error: 'Invalid prediction request',
-      details: error.errors
+      details: error.issues
     });
     return;
   }

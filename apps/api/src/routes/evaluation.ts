@@ -1,6 +1,6 @@
 import { Router, Response, type Router as ExpressRouter } from 'express';
 import { z } from 'zod';
-import { createDbPool, Queryable } from '../db/client';
+import { getServerPool, Queryable } from '../db/client';
 import { readDatabaseConfig } from '../db/config';
 import {
   readEvaluationDataCoverage,
@@ -25,7 +25,7 @@ const runsQuerySchema = z.object({
 });
 
 export function createEvaluationRouter(
-  client: Queryable = createDbPool(),
+  client: Queryable = getServerPool(),
   options: EvaluationRouterOptions = {}
 ): ExpressRouter {
   const router: ExpressRouter = Router();
@@ -96,7 +96,7 @@ function handleRouteError(res: Response, error: unknown): void {
     res.status(400).json({
       success: false,
       error: 'invalid_evaluation_request',
-      details: error.errors
+      details: error.issues
     });
     return;
   }

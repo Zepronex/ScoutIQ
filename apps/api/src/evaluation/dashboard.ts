@@ -128,7 +128,7 @@ export async function readPlayerGameweekHistoryArtifact(
   if (!existsSync(filePath)) {
     return {
       artifact: null,
-      warnings: [`Player-gameweek history artifact is missing at ${filePath}.`]
+      warnings: ['Player-gameweek history artifact is missing.']
     };
   }
 
@@ -137,14 +137,14 @@ export async function readPlayerGameweekHistoryArtifact(
     if (!isRecord(value)) {
       return {
         artifact: null,
-        warnings: [`Player-gameweek history artifact is not a JSON object at ${filePath}.`]
+        warnings: ['Player-gameweek history artifact is not a JSON object.']
       };
     }
 
     const source = isRecord(value.source) ? value.source : {};
     return {
       artifact: {
-        path: filePath,
+        path: 'player_gameweek_history.json',
         generatedAt: readOptionalString(value.generatedAt),
         sourceName: readOptionalString(source.name),
         playerCount: readOptionalNumber(value.playerCount),
@@ -155,7 +155,7 @@ export async function readPlayerGameweekHistoryArtifact(
   } catch {
     return {
       artifact: null,
-      warnings: [`Player-gameweek history artifact could not be read at ${filePath}.`]
+      warnings: ['Player-gameweek history artifact could not be read.']
     };
   }
 }

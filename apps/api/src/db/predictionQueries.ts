@@ -14,6 +14,95 @@ export type TopPredictionFilters = {
   limit: number;
 };
 
+export type PlanningGameweek = {
+  id: number;
+  deadline: string;
+  season: string | null;
+  sourceUpdatedAt: string;
+  runId: number | null;
+};
+
+type PlanningWindow = {
+  gameweek: PlanningGameweek;
+  snapshotId: number;
+  predictionCount: number;
+  playerCount: number;
+};
+
+export async function readPlanningWindow(client: Queryable): Promise<PlanningWindow | null> {
+  const { rows: [row] } = await client.query<{
+    id: number;
+    deadline_time: Date | string;
+    season: string | null;
+    snapshot_id: string;
+    generated_at: Date | string;
+    run_id: string | null;
+    prediction_count: number | null;
+    player_count: number;
+  }>(`
+    WITH snapshot AS (
+      SELECT id, generated_at, season, record_counts
+      FROM ingestion_runs ORDER BY generated_at DESC, id DESC LIMIT 1
+    )
+    SELECT g.id, g.deadline_time, s.id AS snapshot_id, s.generated_at, s.season,
+           r.id AS run_id, r.prediction_count, (s.record_counts->>'players')::int AS player_count
+    FROM snapshot s
+    JOIN gameweeks g ON g.ingestion_run_id = s.id
+    LEFT JOIN LATERAL (
+      SELECT id, prediction_count FROM prediction_runs pr
+      WHERE source_run_id = s.id AND target_gameweek_id = g.id AND prediction_count > 0
+        AND EXISTS (SELECT 1 FROM player_predictions pp WHERE pp.prediction_run_id = pr.id)
+      ORDER BY updated_at DESC, id DESC LIMIT 1
+    ) r ON true
+    WHERE NOT g.finished AND g.deadline_time > now()
+    ORDER BY g.deadline_time, g.id LIMIT 1
+  `);
+
+  if (!row) return null;
+  return {
+    gameweek: {
+      id: row.id,
+      deadline: toIsoString(row.deadline_time),
+      season: row.season,
+      sourceUpdatedAt: toIsoString(row.generated_at),
+      runId: row.run_id === null ? null : Number(row.run_id)
+    },
+    snapshotId: Number(row.snapshot_id),
+    predictionCount: row.prediction_count ?? 0,
+    playerCount: row.player_count ?? 0
+  };
+}
+
+export async function readPlanningPredictions(client: Queryable, window: PlanningWindow): Promise<PlayerPrediction[]> {
+  if (window.gameweek.runId === null) return [];
+  const [predictions, { rows: fixtures }] = await Promise.all([
+    readPredictionsForRun(client, window.gameweek.runId, { limit: window.predictionCount, snapshotId: window.snapshotId }),
+    client.query<{ id: number; team_h_id: number; team_a_id: number }>(`
+      SELECT id, team_h_id, team_a_id FROM fixtures
+      WHERE ingestion_run_id = $1 AND event_id = $2 AND NOT started AND NOT finished
+    `, [window.snapshotId, window.gameweek.id])
+  ]);
+  const expected = new Map<number, Set<number>>();
+  for (const fixture of fixtures) {
+    for (const teamId of [fixture.team_h_id, fixture.team_a_id]) {
+      const ids = expected.get(teamId) ?? new Set<number>();
+      ids.add(fixture.id);
+      expected.set(teamId, ids);
+    }
+  }
+  const byPlayer = new Map<number, PlayerPrediction[]>();
+  for (const prediction of predictions) {
+    if (prediction.fixtureId === null || !expected.get(prediction.teamId)?.has(prediction.fixtureId)) continue;
+    const rows = byPlayer.get(prediction.playerId) ?? [];
+    rows.push(prediction);
+    byPlayer.set(prediction.playerId, rows);
+  }
+  // A partial double gameweek total is misleading even when one fixture has a valid row.
+  return [...byPlayer.values()].filter(rows =>
+    new Set(rows.map(row => row.fixtureId)).size === expected.get(rows[0].teamId)?.size
+  ).flat();
+}
+
 type PredictionRunDbRow = {
   id: string;
   run_key: string;
@@ -292,7 +381,7 @@ async function readLatestPredictionRunForGameweek(
 async function readPredictionsForRun(
   client: Queryable,
   predictionRunId: number,
-  options: { position?: Pos; limit: number }
+  options: { position?: Pos; limit: number; snapshotId?: number }
 ): Promise<PlayerPrediction[]> {
   const values: Array<number | string> = [predictionRunId];
   const conditions = ['pp.prediction_run_id = $1'];
@@ -300,6 +389,11 @@ async function readPredictionsForRun(
   if (options.position) {
     values.push(options.position);
     conditions.push(`p.position = $${values.length}`);
+  }
+
+  if (options.snapshotId !== undefined) {
+    values.push(options.snapshotId);
+    conditions.push(`p.ingestion_run_id = $${values.length}`);
   }
 
   values.push(options.limit);

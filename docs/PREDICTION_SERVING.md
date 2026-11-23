@@ -1,5 +1,9 @@
 # Prediction Serving
 
+The gameweek planner and browser rankings use `GET /api/predictions/planning`. It selects the earliest unfinished gameweek with a future deadline and matches the latest published FPL snapshot by source run. Rankings aggregate all scheduled fixtures per player, show known blanks as zero, and withhold partial or missing fixture coverage. `GET /api/ready` reports whether current projections can be served. See the [Deployment Guide](DEPLOYMENT.md) for atomic publishing with `refresh:fpl`.
+
+The per-fixture endpoints below support historical inspection and existing callers.
+
 ScoutIQ stores Day 5 expected-points outputs in PostgreSQL so the backend API, optimizer, and frontend can consume deterministic prediction data. This layer does not add agent behavior or explanation generation.
 
 ## Local Artifact Inputs

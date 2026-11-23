@@ -105,10 +105,10 @@ const ModelArtifactSchema = z.object({
 }).passthrough();
 
 const EvaluationReportSchema = z.object({
-  metrics: z.record(z.unknown()),
-  baseline_metrics: z.record(z.unknown()).optional().nullable(),
-  metrics_by_position: z.record(z.unknown()).optional().nullable(),
-  baseline_metrics_by_position: z.record(z.unknown()).optional().nullable(),
+  metrics: z.record(z.string(), z.unknown()),
+  baseline_metrics: z.record(z.string(), z.unknown()).optional().nullable(),
+  metrics_by_position: z.record(z.string(), z.unknown()).optional().nullable(),
+  baseline_metrics_by_position: z.record(z.string(), z.unknown()).optional().nullable(),
   evaluated_gameweeks: z.array(z.coerce.number().int().positive()).optional(),
   skipped_gameweeks: z.array(z.coerce.number().int().positive()).optional(),
   prediction_count: z.coerce.number().int().nonnegative()

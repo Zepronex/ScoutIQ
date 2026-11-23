@@ -33,7 +33,7 @@ export function buildFallbackExplanation(
     alternatives: buildAlternatives(input),
     dataLimitations: buildDataLimitations(input, playersMissingPredictionRun),
     constraintSummary: buildConstraintSummary(input, invalidTransfer),
-    disclaimer: 'The optimizer makes the recommendation. This explanation only summarizes optimizer output and prediction metadata.',
+    disclaimer: 'Projections are estimates, so check team news before the deadline.',
     provider: 'deterministic_fallback' as const,
     usedFallback: true,
     fallbackReason,
@@ -55,10 +55,10 @@ function buildSummary(
 ): string {
   const xi = input.startingXi;
   if (!topTransfer) {
-    return `Optimizer recommends a ${xi.formation} starting XI projected for ${formatPoints(xi.totalPredictedPoints)} with no positive transfer option returned.`;
+    return `Line up ${xi.formation} for a projected ${formatPoints(xi.totalPredictedPoints)} with ${xi.captaincy.captain.playerName} as captain. No transfer was compared, or none improved on keeping your squad.`;
   }
 
-  return `Optimizer recommends a ${xi.formation} starting XI projected for ${formatPoints(xi.totalPredictedPoints)}. The top transfer option has ${formatSignedPoints(topTransfer.netExpectedPointsGain)} net expected points.`;
+  return `Line up ${xi.formation} for a projected ${formatPoints(xi.totalPredictedPoints)} with ${xi.captaincy.captain.playerName} as captain. The best transfer found is worth ${formatSignedPoints(topTransfer.netExpectedPointsGain)} after any points hit.`;
 }
 
 function buildRecommendedActions(
@@ -66,15 +66,15 @@ function buildRecommendedActions(
   topTransfer: RecommendationExplanationInput['transferRecommendations'][number] | undefined
 ): string[] {
   const actions = [
-    `Start ${input.startingXi.formation} with ${input.startingXi.starters.map(player => player.playerName).join(', ')}.`,
-    `Captain ${input.startingXi.captaincy.captain.playerName} and vice captain ${input.startingXi.captaincy.viceCaptain.playerName}.`,
-    `Bench order: ${input.startingXi.bench.map(player => player.playerName).join(', ')}.`
+    `Start ${input.startingXi.starters.map(player => player.playerName).join(', ')}.`,
+    `Captain ${input.startingXi.captaincy.captain.playerName}, with ${input.startingXi.captaincy.viceCaptain.playerName} as vice-captain.`,
+    `Bench, in order: ${input.startingXi.bench.map(player => player.playerName).join(', ')}.`
   ];
 
   if (topTransfer) {
-    actions.push(`Top transfer option: ${formatTransferMoves(topTransfer)}.`);
+    actions.push(`Best transfer: ${formatTransferMoves(topTransfer)}.`);
   } else {
-    actions.push('Hold transfers unless new optimizer data produces a positive expected points gain.');
+    actions.push('Keep your transfers unless a later comparison shows a gain.');
   }
 
   return actions;
@@ -86,10 +86,10 @@ function buildStartingXiReasoning(input: RecommendationExplanationInput): string
   const lowestBench = [...xi.bench].sort(sortByPredictedPointsDesc)[0];
 
   return [
-    `${xi.formation} is the optimizer-selected valid formation for this squad.`,
-    `The selected XI totals ${formatPoints(xi.totalPredictedPoints)} before captaincy display adjustments.`,
-    `${highestStarter.playerName} is the highest projected starter at ${formatPoints(highestStarter.predictedPoints)}.`,
-    `${lowestBench.playerName} is first bench with ${formatPoints(lowestBench.predictedPoints)}.`
+    `${xi.formation} scores highest of the formations your 15 players can fill.`,
+    `The total of ${formatPoints(xi.totalPredictedPoints)} counts the captain twice.`,
+    `${highestStarter.playerName} has the highest projection in the XI at ${formatPoints(highestStarter.predictedPoints)}.`,
+    `${lowestBench.playerName} is the strongest player left on the bench at ${formatPoints(lowestBench.predictedPoints)}.`
   ];
 }
 
@@ -97,20 +97,19 @@ function buildCaptaincyReasoning(input: RecommendationExplanationInput): string[
   const { captaincy } = input.startingXi;
 
   return [
-    `${captaincy.captain.playerName} is captain on ${formatPoints(captaincy.captainPredictedPoints)}.`,
-    `${captaincy.viceCaptain.playerName} is vice captain on ${formatPoints(captaincy.viceCaptainPredictedPoints)}.`,
-    'Captaincy is reported from the optimizer output and is not recalculated by the explanation layer.'
+    `${captaincy.captain.playerName} takes the armband on ${formatPoints(captaincy.captainPredictedPoints)}, the highest projection among your starters.`,
+    `${captaincy.viceCaptain.playerName} is vice-captain on ${formatPoints(captaincy.viceCaptainPredictedPoints)} and takes over if the captain does not play.`
   ];
 }
 
 function buildTransferReasoning(input: RecommendationExplanationInput): string[] {
   if (input.transferRecommendations.length === 0) {
-    return ['No transfer recommendation was returned by the optimizer for this payload.'];
+    return ['No transfer options have been compared for this plan.'];
   }
 
   return input.transferRecommendations.slice(0, 3).map((recommendation, index) => {
     const rank = index + 1;
-    return `Option ${rank}: ${formatTransferMoves(recommendation)} changes expected points by ${formatSignedPoints(recommendation.expectedPointsGain)}, applies a ${recommendation.pointsHit} point hit, and nets ${formatSignedPoints(recommendation.netExpectedPointsGain)}.`;
+    return `Option ${rank}: ${formatTransferMoves(recommendation)} adds ${formatSignedPoints(recommendation.expectedPointsGain)} to the projected XI${recommendation.pointsHit ? `, costs a ${recommendation.pointsHit}-point hit` : ' with no hit'}, for a net ${formatSignedPoints(recommendation.netExpectedPointsGain)}.`;
   });
 }
 
@@ -130,23 +129,23 @@ function buildRisks(
   }
 
   if (unavailablePlayers.length > 0) {
-    risks.push(`Availability flags require review for ${unavailablePlayers.map(player => player.playerName).join(', ')}.`);
+    risks.push(`Check the fitness of ${unavailablePlayers.map(player => player.playerName).join(', ')} before the deadline. FPL has flagged them.`);
   }
 
   if (input.transferRecommendations.some(recommendation => recommendation.netExpectedPointsGain < 0)) {
-    risks.push('One or more transfer options are negative after points hits.');
+    risks.push('At least one transfer option loses points once the hit is counted.');
   }
 
-  return risks.length > 0 ? risks : ['No optimizer constraint or availability risk was flagged in the supplied payload.'];
+  return risks.length > 0 ? risks : ['No player in this plan is flagged as doubtful or unavailable.'];
 }
 
 function buildAlternatives(input: RecommendationExplanationInput): string[] {
   const alternatives = input.transferRecommendations.slice(1, 4).map((recommendation, index) => {
-    return `Alternative ${index + 1}: ${formatTransferMoves(recommendation)} for ${formatSignedPoints(recommendation.netExpectedPointsGain)} net expected points.`;
+    return `${formatTransferMoves(recommendation)} for a net ${formatSignedPoints(recommendation.netExpectedPointsGain)}.`;
   });
 
   if (alternatives.length > 0) return alternatives;
-  return ['No additional transfer alternatives were returned by the optimizer.'];
+  return [];
 }
 
 function buildDataLimitations(
@@ -164,10 +163,10 @@ function buildDataLimitations(
   }
 
   if (playersMissingPredictionRun.length > 0) {
-    limitations.push(`${playersMissingPredictionRun.length} player(s) do not include prediction run metadata.`);
+    limitations.push(`${playersMissingPredictionRun.length} ${playersMissingPredictionRun.length === 1 ? 'player has' : 'players have'} no projection for this gameweek.`);
   }
 
-  limitations.push('Prediction quality, player status, and fixture assumptions are limited to the supplied optimizer payload.');
+  limitations.push('Projections cover this gameweek only and use the FPL data captured at the last refresh.');
 
   return limitations;
 }
@@ -179,16 +178,18 @@ function buildConstraintSummary(
   const xiValidation = input.startingXi.constraintSummary;
   const summary = [
     xiValidation.valid
-      ? `Starting XI constraints passed ${xiValidation.checks.length} check(s).`
+      ? `The lineup passes all ${xiValidation.checks.length} FPL squad and formation rules.`
       : `Starting XI constraints failed ${xiValidation.violations.length} check(s): ${formatViolations(xiValidation.violations)}.`
   ];
 
   if (input.transferRecommendations.length === 0) {
-    summary.push('No transfer constraints were supplied because no transfer recommendation was returned.');
+    // Nothing to add when no transfer was compared.
   } else if (invalidTransfer) {
     summary.push(`Transfer constraints include an invalid option: ${formatViolations(invalidTransfer.validation.violations)}.`);
   } else {
-    summary.push(`All ${input.transferRecommendations.length} supplied transfer option(s) passed validation.`);
+    summary.push(input.transferRecommendations.length === 1
+      ? 'The transfer option keeps the squad within budget and club limits.'
+      : `All ${input.transferRecommendations.length} transfer options keep the squad within budget and club limits.`);
   }
 
   return summary;

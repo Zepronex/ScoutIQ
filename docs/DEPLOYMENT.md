@@ -26,7 +26,7 @@ For separate hosts, configure an `/api/*` reverse proxy on the frontend or set `
 
 ## Refresh data
 
-`pnpm run refresh:fpl --fetch-history` captures public player, fixture and history data with four concurrent history requests, trains or evaluates when enough completed gameweeks are available, then publishes the matching FPL and projection rows in one database transaction. History remains optional early in the season. ScoutIQ uses the uncalibrated rules when fewer than two training gameweeks are available and evaluates after three. A failed publish leaves the previous snapshot in place. The publisher rejects older snapshots, mismatched input hashes, incomplete fixture coverage and targets whose deadlines have passed.
+`pnpm run refresh:fpl --fetch-history` captures public player, fixture and history data with four concurrent history requests, trains or evaluates when enough completed gameweeks are available, then publishes the matching FPL and projection rows in one database transaction. History remains optional early in the season. With fewer than two completed gameweeks, projections come from the prior-season fit alone. Backtests start after three. A failed publish leaves the previous snapshot in place. The publisher rejects older snapshots, mismatched input hashes, incomplete fixture coverage and targets whose deadlines have passed.
 
 Set a scheduler on the batch runner. Refresh at least daily during the season and around deadlines so the next game's projections are loaded promptly. Set the scheduler to serialize runs, capture the exit status and alert on failures or stale data. For frequent schedule and price refreshes, reuse a same-season local history file that your history job refreshes separately.
 

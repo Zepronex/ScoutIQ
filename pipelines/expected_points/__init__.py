@@ -1,3 +1,3 @@
 from __future__ import annotations
 
-MODEL_VERSION = 'expected-points-rule-baseline-v1'
+MODEL_VERSION = 'expected-points-ridge-v2'

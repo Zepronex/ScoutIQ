@@ -4,7 +4,7 @@ import argparse
 from typing import Sequence
 
 from pipelines.databricks.cli import resolve_repo_path
-from pipelines.expected_points.baseline import RuleBasedExpectedPointsModel
+from pipelines.expected_points.regression import ExpectedPointsModel, load_prior
 from pipelines.expected_points.features import validate_training_feature_row
 from pipelines.expected_points.io import read_jsonl, write_json
 
@@ -35,7 +35,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             f'Expected at least {args.min_gameweeks} historical gameweeks, received {gameweek_count}'
         )
 
-    model = RuleBasedExpectedPointsModel.fit(rows)
+    model = ExpectedPointsModel.fit(rows, prior=load_prior())
     write_json(output_path, model.to_dict())
     print(f'Trained {model.model_version} on {model.training_row_count} rows and wrote {output_path}')
     return 0

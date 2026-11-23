@@ -46,19 +46,42 @@ future_checked_snapshot.player.totalPoints - pre_gameweek_snapshot.player.totalP
 - Walk-forward backtests train on rows with `upcoming_gameweek_id` strictly less than the evaluated target gameweek.
 - Fixture result columns are not included in Gold model feature rows.
 
-## Baseline Model
+## Model
 
-The baseline is `expected-points-rule-baseline-v1`.
+The model is `expected-points-ridge-v2`, a ridge regression fitted in plain Python (`pipelines/expected_points/regression.py`). It predicts points for one player in one fixture from:
 
-It blends recent points, season average points and points per game, then applies simple deterministic adjustments for:
+- average points over the player's last three fixtures, and over the season so far
+- share of minutes played over the same two windows
+- price before the fixture
+- fixture difficulty and home or away
+- position
 
-- Availability/chance of playing
-- Recent or season average minutes
-- Fixture difficulty
-- Home/away status
-- Learned positional calibration from historical training rows
+The fitted value is then scaled by the published chance of playing. A player flagged injured, suspended or unavailable with no percentage is projected at zero, and a doubtful player with no percentage at half.
 
-The comparison baseline is recent average points, using historical rolling points when available and current FPL form otherwise.
+### Prior season
+
+A linear regression only needs two sums over its training rows (`X'X` and `X'y`). `pipelines/expected_points/priors/season_2025_26.json` stores those sums for the 29,747 player-fixture rows of 2025-26. Training adds them to the current season's sums, which gives the same coefficients as training on both seasons together without committing last season's rows.
+
+This matters early in a season. In Gameweek 1 nobody has form or minutes, so the prior supplies the relationship between price, position, fixture and points. As the season fills in, current rows take a growing share of the fit.
+
+Rebuild the prior after a season ends:
+
+```sh
+python3 -m pipelines.expected_points.build_prior --season 2026-27 \
+  --input data/features/player_gameweek_training_rows.jsonl
+```
+
+Then point `DEFAULT_PRIOR_PATH` in `regression.py` at the new file.
+
+### Comparison baseline
+
+The baseline is the player's average points over their last three fixtures, with no fitting. The walk-forward backtest reports both, and the app only says the model is better when MAE and RMSE both improve.
+
+On the 23 November 2026 capture (Gameweeks 3 to 11 of 2026-27, 6,000 predictions) the model scored MAE 1.2112 and RMSE 2.0694 against the baseline's 1.2260 and 2.3069. On 2025-26 it was level on MAE (1.0371 against 1.0366) and better on RMSE (1.9242 against 2.1458); that run is optimistic because the prior was built from the same season. The MAE margin is small. Most player-fixtures score zero, which favours a baseline that predicts exactly zero for anyone who has not been playing.
+
+### Training and serving use the same features
+
+Historical rows are built from each player's fixture history. Rows for the upcoming gameweek come from the current snapshot, which only carries FPL's 30-day form and season totals. When a history file is supplied, `apply_history_form` recomputes the form and minutes features for upcoming rows from that same history so the model sees one definition in both places.
 
 ## Local Commands
 
@@ -139,9 +162,8 @@ The prediction output contains `player_id`, `upcoming_gameweek_id`, `fixture_id`
 
 ## Current Limitations
 
-- The model is intentionally simple and interpretable.
+- The model is linear and uses only public FPL data. It knows nothing about expected goals, set-piece duty, rotation or opponent strength beyond the FPL difficulty rating.
 - It is not a squad or transfer optimizer.
 - It does not use external paid data.
 - Historical training quality depends on official FPL element-summary availability or archived deterministic snapshots.
-- Double-gameweek aggregation is left to a future serving/optimizer layer.
-- The current Gold layer uses official FPL form as the immediate recent-points proxy when no historical rows are available.
+- Without a history file, upcoming rows fall back to official FPL form as the recent-points feature.

@@ -5,10 +5,17 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from pipelines.expected_points.baseline import RuleBasedExpectedPointsModel
+from pipelines.expected_points.regression import (
+    FEATURE_NAMES,
+    ExpectedPointsModel,
+    SeasonPrior,
+    SufficientStatistics,
+    load_prior
+)
 from pipelines.expected_points.evaluation import calculate_prediction_metrics, split_train_test_for_gameweek
 from pipelines.expected_points.features import (
     PREDICTION_FEATURE_COLUMNS,
+    apply_history_form,
     build_expected_points_feature_files,
     build_historical_training_rows,
     build_prediction_feature_rows,
@@ -76,18 +83,88 @@ class ExpectedPointsFoundationTests(unittest.TestCase):
         self.assertEqual([row['upcoming_gameweek_id'] for row in test_rows], [3])
 
     def test_prediction_output_schema_contains_expected_points_and_baseline(self) -> None:
-        model = RuleBasedExpectedPointsModel.fit([
-            training_row(2, target_points=7),
-            training_row(3, target_points=2)
-        ])
+        model = ExpectedPointsModel.fit(varied_training_rows(), prior=None)
 
         prediction = model.predict_row(training_row(4, target_points=6))
 
         self.assertEqual(prediction['player_id'], 1)
         self.assertEqual(prediction['upcoming_gameweek_id'], 4)
         self.assertIn('expected_points', prediction)
-        self.assertIn('baseline_expected_points', prediction)
-        self.assertEqual(prediction['model_version'], 'expected-points-rule-baseline-v1')
+        self.assertEqual(prediction['baseline_expected_points'], 5.0)
+        self.assertEqual(prediction['model_version'], 'expected-points-ridge-v2')
+
+    def test_regression_recovers_a_linear_relationship(self) -> None:
+        rows = [
+            {**training_row(2 + index % 3, target_points=0), 'rolling_points_average': float(form),
+             'price': 5.0 + index % 4, 'target_points': 1.0 + 0.5 * form + 0.25 * (5.0 + index % 4)}
+            for index, form in enumerate([0, 1, 2, 3, 4, 5, 6, 7, 8, 2, 5, 1])
+        ]
+
+        model = ExpectedPointsModel.fit(rows, prior=None)
+        prediction = model.predict_row({**rows[0], 'rolling_points_average': 4.0, 'price': 6.0})
+
+        self.assertAlmostEqual(prediction['expected_points'], 1.0 + 2.0 + 1.5, delta=0.2)
+
+    def test_prior_season_statistics_stand_in_for_missing_history(self) -> None:
+        prior = SeasonPrior('2025-26', SufficientStatistics.from_rows(varied_training_rows()))
+
+        from_prior = ExpectedPointsModel.fit([], prior=prior)
+        from_rows = ExpectedPointsModel.fit(varied_training_rows(), prior=None)
+
+        self.assertEqual(from_prior.coefficients, from_rows.coefficients)
+        self.assertEqual(from_prior.training_row_count, 0)
+        self.assertEqual(from_prior.prior_season, '2025-26')
+        with self.assertRaisesRegex(ValueError, 'without rows or a prior'):
+            ExpectedPointsModel.fit([], prior=None)
+
+    def test_committed_prior_matches_the_model_features(self) -> None:
+        prior = load_prior()
+
+        self.assertIsNotNone(prior)
+        self.assertEqual(len(prior.statistics.xtx), len(FEATURE_NAMES))
+        self.assertGreater(prior.statistics.row_count, 10000)
+
+    def test_unavailable_players_are_projected_to_zero(self) -> None:
+        model = ExpectedPointsModel.fit(varied_training_rows(), prior=None)
+        row = training_row(4, target_points=6)
+
+        fit = model.predict_row({**row, 'availability_status': 'a', 'chance_of_playing_next_round': None})
+        doubt = model.predict_row({**row, 'availability_status': 'd', 'chance_of_playing_next_round': 25})
+        injured = model.predict_row({**row, 'availability_status': 'i', 'chance_of_playing_next_round': None})
+
+        self.assertGreater(fit['expected_points'], 0)
+        self.assertAlmostEqual(doubt['expected_points'], fit['expected_points'] * 0.25, places=3)
+        self.assertEqual(injured['expected_points'], 0.0)
+
+    def test_model_artifact_round_trips_and_rejects_older_versions(self) -> None:
+        model = ExpectedPointsModel.fit(varied_training_rows(), prior=None)
+
+        self.assertEqual(ExpectedPointsModel.from_dict(model.to_dict()), model)
+        with self.assertRaisesRegex(ValueError, 'model:train'):
+            ExpectedPointsModel.from_dict({'model_version': 'expected-points-rule-baseline-v1', 'global_correction': 0.1})
+
+    def test_serving_rows_take_form_from_the_same_history_as_training_rows(self) -> None:
+        row = {**training_row(4, target_points=0), 'rolling_points_average': 9.9, 'season_minutes_average': 1.0}
+        del row['target_points'], row['target_minutes']
+
+        updated = apply_history_form([row], history_payload(), rolling_window=2)[0]
+
+        self.assertEqual(updated['completed_gameweeks'], 3)
+        self.assertEqual(updated['rolling_points_average'], 4.5)
+        self.assertEqual(updated['rolling_minutes_average'], 75.0)
+        self.assertAlmostEqual(updated['season_points_average'], 4.6667)
+        self.assertEqual(updated['season_minutes_average'], 80.0)
+
+    def test_history_training_rows_use_the_price_before_each_fixture(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            write_dataset(root / 'latest', history_feature_dataset())
+            history_path = root / 'history.json'
+            history_path.write_text(json.dumps(history_payload()), encoding='utf-8')
+
+            result = build_expected_points_feature_files(root / 'latest', history_path)
+
+        self.assertEqual([row['price'] for row in result.training_rows], [12.5, 12.6, 12.6])
 
     def test_metric_calculation_reports_mae_and_rmse(self) -> None:
         metrics = calculate_prediction_metrics(
@@ -121,6 +198,23 @@ def training_row(gameweek: int, *, target_points: int) -> dict[str, object]:
         'target_points': target_points,
         'target_minutes': 90
     }
+
+
+def varied_training_rows() -> list[dict[str, object]]:
+    rows = []
+    for index in range(24):
+        rows.append({
+            **training_row(2 + index % 3, target_points=(index * 7) % 11),
+            'rolling_points_average': float(index % 9),
+            'season_points_average': float((index * 3) % 7),
+            'rolling_minutes_average': float((index * 37) % 91),
+            'season_minutes_average': float((index * 53) % 91),
+            'fixture_difficulty': 2 + index % 4,
+            'home_away': 'H' if index % 2 else 'A',
+            'position': ('GK', 'DEF', 'MID', 'FWD')[index % 4],
+            'price': 4.0 + (index * 5) % 9
+        })
+    return rows
 
 
 def write_snapshot(path: Path, *, checked_gameweek: int, target_gameweek: int, total_points: int, minutes: int) -> None:

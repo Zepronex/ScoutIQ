@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 from typing import Any
 
-from pipelines.expected_points.baseline import RuleBasedExpectedPointsModel
+from pipelines.expected_points.regression import ExpectedPointsModel, SeasonPrior, load_prior
 from pipelines.expected_points.features import validate_training_feature_row
 
 JsonObject = dict[str, Any]
@@ -30,8 +30,11 @@ def split_train_test_for_gameweek(rows: list[JsonObject], target_gameweek_id: in
 def walk_forward_backtest(
     rows: list[JsonObject],
     *,
-    min_training_gameweeks: int = 2
+    min_training_gameweeks: int = 2,
+    prior: SeasonPrior | None | str = 'default'
 ) -> JsonObject:
+    if prior == 'default':
+        prior = load_prior()
     if min_training_gameweeks < 1:
         raise ValueError('min_training_gameweeks must be at least 1')
 
@@ -49,7 +52,7 @@ def walk_forward_backtest(
             skipped_gameweeks.append(target_gameweek_id)
             continue
 
-        model = RuleBasedExpectedPointsModel.fit(train_rows)
+        model = ExpectedPointsModel.fit(train_rows, prior=prior)
         for test_row in test_rows:
             prediction = model.predict_row(test_row)
             predictions.append({

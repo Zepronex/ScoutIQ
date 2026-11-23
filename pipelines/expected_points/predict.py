@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Sequence
 
 from pipelines.databricks.cli import resolve_repo_path
-from pipelines.expected_points.baseline import RuleBasedExpectedPointsModel
+from pipelines.expected_points.regression import ExpectedPointsModel, load_prior
 from pipelines.expected_points.features import normalize_prediction_feature_row
 from pipelines.expected_points.io import read_json, read_jsonl, write_jsonl
 
@@ -22,12 +22,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     ]
 
     if model_path.exists():
-        model = RuleBasedExpectedPointsModel.from_dict(read_json(model_path))
+        model = ExpectedPointsModel.from_dict(read_json(model_path))
     elif args.require_trained:
         raise FileNotFoundError(f'Missing model artifact: {model_path}')
     else:
-        model = RuleBasedExpectedPointsModel()
-        print(f'Model artifact not found at {model_path}; using uncalibrated rule baseline')
+        prior = load_prior()
+        if prior is None:
+            raise FileNotFoundError(f'Missing model artifact {model_path} and no prior season to fall back on')
+        model = ExpectedPointsModel.fit([], prior=prior)
+        print(f'Model artifact not found at {model_path}; using the {prior.season} prior-season fit')
 
     predictions = sorted(
         model.predict(rows),

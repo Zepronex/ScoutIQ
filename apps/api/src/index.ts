@@ -1,4 +1,5 @@
 import express from 'express';
+import compression from 'compression';
 import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
@@ -7,6 +8,7 @@ import { existsSync } from 'node:fs';
 import { isIP } from 'node:net';
 import path from 'node:path';
 import { getServerPool } from './db/client';
+import { readLimit } from './lib/guards';
 import { readPlanningWindow } from './db/predictionQueries';
 import { playersRouter } from './routes/players';
 import { analyzeRouter } from './routes/analyze';
@@ -33,6 +35,9 @@ export function createApp(): express.Express {
       }
     }
   }));
+
+  // The planning payload is about 170 KB of JSON and compresses to roughly a tenth.
+  app.use(compression());
 
   app.use('/api', cors({
     origin: readFrontendOrigin(process.env.FRONTEND_URL),
@@ -70,12 +75,23 @@ export function createApp(): express.Express {
     skip: req => req.method !== 'POST',
     message: limitedResponse
   });
-  app.use('/api/analyze', limitPlanning());
-  app.use('/api/optimizer/squad', limitPlanning());
-  app.use('/api/optimizer/transfers', limitPlanning());
-  app.use('/api/optimizer/starting-xi', limitPlanning(30));
-  app.use('/api/agent', limitPlanning());
-  app.use('/api/entries', limitPlanning());
+  // Per-address limits do not stop a crowd of addresses. These ceilings count
+  // every caller together so total CPU and upstream FPL traffic stay bounded.
+  const limitEveryone = (limit: number) => rateLimit({
+    windowMs, limit, standardHeaders: false, legacyHeaders: false,
+    keyGenerator: () => 'everyone',
+    skip: req => req.method !== 'POST',
+    statusCode: 503,
+    message: { success: false, error: 'ScoutIQ is busy right now. Try again in a few minutes.' }
+  });
+  const planningCeiling = limitEveryone(readLimit(process.env.SCOUTIQ_GLOBAL_PLANNING_LIMIT, 900, 'SCOUTIQ_GLOBAL_PLANNING_LIMIT'));
+  const importCeiling = limitEveryone(readLimit(process.env.SCOUTIQ_GLOBAL_IMPORT_LIMIT, 150, 'SCOUTIQ_GLOBAL_IMPORT_LIMIT'));
+  app.use('/api/analyze', limitPlanning(30), planningCeiling);
+  app.use('/api/optimizer/squad', limitPlanning(), planningCeiling);
+  app.use('/api/optimizer/transfers', limitPlanning(), planningCeiling);
+  app.use('/api/optimizer/starting-xi', limitPlanning(30), planningCeiling);
+  app.use('/api/agent', limitPlanning(), planningCeiling);
+  app.use('/api/entries', limitPlanning(), importCeiling);
   app.use('/api', express.json({ limit: '512kb' }));
   app.use('/api', express.urlencoded({ extended: false, limit: '64kb' }));
 
@@ -145,5 +161,25 @@ if (require.main === module) {
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('PORT must be an integer between 1 and 65535.');
   const mode = process.env.SCOUTIQ_DATA_MODE;
   if (mode && mode !== 'sample' && mode !== 'fpl') throw new Error('SCOUTIQ_DATA_MODE must be fpl or sample.');
-  app.listen(port, () => console.log(`ScoutIQ listening on port ${port}`));
+  const server = app.listen(port, () => console.log(`ScoutIQ listening on port ${port}`));
+  // Close slow or idle connections so they cannot hold sockets open indefinitely.
+  server.headersTimeout = 15_000;
+  server.requestTimeout = 30_000;
+  server.keepAliveTimeout = 65_000;
+
+  // Hosts send SIGTERM on every deploy and restart. Finish open requests first.
+  let closing = false;
+  const shutdown = (signal: string) => {
+    if (closing) return;
+    closing = true;
+    console.log(`${signal} received, shutting down`);
+    const force = setTimeout(() => process.exit(1), 10_000);
+    force.unref();
+    server.close(() => {
+      void getServerPool().end().catch(() => undefined).then(() => process.exit(0));
+    });
+    server.closeIdleConnections();
+  };
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
 }

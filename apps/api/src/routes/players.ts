@@ -13,7 +13,7 @@ const searchSchema = z.object({
 });
 
 const positionSchema = z.enum(['GK', 'DEF', 'MID', 'FWD']);
-const playerIdSchema = z.coerce.number().int().positive();
+const playerIdSchema = z.coerce.number().int().positive().max(2_147_483_647);
 
 export function createPlayersRouter(client: Queryable = getServerPool()): ExpressRouter {
   const router: ExpressRouter = Router();

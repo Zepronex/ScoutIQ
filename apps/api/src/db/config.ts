@@ -95,6 +95,10 @@ function loadEnvFiles(workspaceRoot: string): void {
 }
 
 function buildConnectionString(env: NodeJS.ProcessEnv): string {
+  // The local defaults are public. A production start must name its own database.
+  if (env.NODE_ENV === 'production' && !env.POSTGRES_PASSWORD) {
+    throw new Error('Set DATABASE_URL or POSTGRES_PASSWORD in production.');
+  }
   const host = env.POSTGRES_HOST ?? 'localhost';
   const port = env.POSTGRES_PORT ?? '5432';
   const database = env.POSTGRES_DB ?? 'scoutiq';

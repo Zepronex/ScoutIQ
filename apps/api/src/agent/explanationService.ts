@@ -41,6 +41,9 @@ type ExplanationServiceOptions = {
 };
 
 const RESPONSE_FORMAT_NAME = 'scoutiq_recommendation_explanation';
+// An explanation is ten short fields. These caps bound what one request can cost.
+const MAX_OUTPUT_TOKENS = 1200;
+const MAX_PROVIDER_RESPONSE_CHARS = 256 * 1024;
 
 class AgentExplanationFailure extends Error {
   constructor(readonly reasonCode: AgentFallbackReasonCode) {
@@ -98,6 +101,7 @@ async function requestOpenAIExplanation(
     model: config.model,
     instructions: RECOMMENDATION_EXPLANATION_SYSTEM_PROMPT,
     input: buildUserPrompt(input),
+    max_output_tokens: MAX_OUTPUT_TOKENS,
     text: {
       format: {
         type: 'json_schema',
@@ -138,6 +142,7 @@ async function requestAzureOpenAIExplanation(
         content: buildUserPrompt(input)
       }
     ],
+    max_completion_tokens: MAX_OUTPUT_TOKENS,
     response_format: {
       type: 'json_schema',
       json_schema: {
@@ -186,7 +191,9 @@ async function fetchWithTimeout(
       throw new Error(`provider_http_${response.status}`);
     }
 
-    return response.json();
+    const body = await response.text();
+    if (body.length > MAX_PROVIDER_RESPONSE_CHARS) throw new Error('provider_response_too_large');
+    return JSON.parse(body);
   } finally {
     clearTimeout(timeout);
   }

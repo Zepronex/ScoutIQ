@@ -36,9 +36,10 @@ export function createApp(): express.Express {
 
   app.use('/api', cors({
     origin: readFrontendOrigin(process.env.FRONTEND_URL),
-    credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'DELETE'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
+    // The API has no cookies or sessions, so it never needs credentialed requests.
+    credentials: false,
+    methods: ['GET', 'POST'],
+    allowedHeaders: ['Content-Type'],
     exposedHeaders: ['Retry-After']
   }));
   app.use('/api/health', healthRouter);
@@ -76,7 +77,7 @@ export function createApp(): express.Express {
   app.use('/api/agent', limitPlanning());
   app.use('/api/entries', limitPlanning());
   app.use('/api', express.json({ limit: '512kb' }));
-  app.use('/api', express.urlencoded({ extended: true, limit: '512kb' }));
+  app.use('/api', express.urlencoded({ extended: false, limit: '64kb' }));
 
   app.use('/api/players', playersRouter);
   app.use('/api/analyze', analyzeRouter);

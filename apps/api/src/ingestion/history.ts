@@ -71,6 +71,7 @@ export async function ingestOfficialFplPlayerHistory(
 
   const client = options.client ?? axios.create({
     timeout: 15000,
+    maxContentLength: 8 * 1024 * 1024,
     headers: {
       Accept: 'application/json',
       'User-Agent': 'ScoutIQ-Ingestion/1.0'

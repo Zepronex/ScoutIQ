@@ -8,7 +8,8 @@ export function readSmokeConfig(env = process.env) {
   return {
     apiBaseUrl: stripTrailingSlash(env.SCOUTIQ_API_URL ?? DEFAULT_API_BASE_URL),
     webBaseUrl: stripTrailingSlash(env.SCOUTIQ_WEB_URL ?? DEFAULT_WEB_BASE_URL),
-    timeoutMs: readPositiveInteger(env.SCOUTIQ_SMOKE_TIMEOUT_MS) ?? DEFAULT_TIMEOUT_MS
+    timeoutMs: readPositiveInteger(env.SCOUTIQ_SMOKE_TIMEOUT_MS) ?? DEFAULT_TIMEOUT_MS,
+    requireReady: env.SCOUTIQ_SMOKE_REQUIRE_READY === '1'
   };
 }
 
@@ -32,7 +33,8 @@ export function createSmokeChecks(config = readSmokeConfig()) {
     {
       name: 'Frontend root',
       url: `${config.webBaseUrl}/`,
-      validate: validateFrontendHtml
+      validate: validateFrontendHtml,
+      verifyEntry: true
     },
     {
       name: 'Frontend evaluation route',
@@ -43,7 +45,26 @@ export function createSmokeChecks(config = readSmokeConfig()) {
       name: 'Frontend analyze route',
       url: `${config.webBaseUrl}/analyze`,
       validate: validateFrontendHtml
-    }
+    },
+    {
+      name: 'Frontend player rankings route',
+      url: `${config.webBaseUrl}/top-players`,
+      validate: validateFrontendHtml
+    },
+    ...(config.requireReady ? [
+      {
+        name: 'FPL gameweek readiness',
+        url: `${config.apiBaseUrl}/api/ready`,
+        validate: body => body?.status === 'ready' && Number.isInteger(body.gameweek?.runId)
+          ? passed() : failed('current gameweek projections are unavailable')
+      },
+      {
+        name: 'Current player projections',
+        url: `${config.apiBaseUrl}/api/predictions/planning`,
+        validate: body => body?.success === true && body.data?.source === 'fpl' && body.data.players?.length > 0
+          ? passed() : failed('no current FPL player projections')
+      }
+    ] : [])
   ];
 }
 
@@ -66,7 +87,8 @@ export async function runSmokeChecks({
 
 export async function runSmokeCheck(check, { fetchImpl = fetch, timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
   try {
-    const response = await fetchWithTimeout(check.url, { fetchImpl, timeoutMs });
+    const signal = AbortSignal.timeout(timeoutMs);
+    const response = await fetchImpl(check.url, { signal });
     const contentType = response.headers.get('content-type') ?? '';
     const body = contentType.includes('application/json') ? await response.json() : await response.text();
 
@@ -76,11 +98,18 @@ export async function runSmokeCheck(check, { fetchImpl = fetch, timeoutMs = DEFA
         name: check.name,
         url: check.url,
         status: response.status,
-        error: `HTTP ${response.status}`
+        error: `HTTP ${response.status}${typeof body?.status === 'string' ? ` (${body.status})` : ''}`
       };
     }
 
-    const validation = check.validate(body);
+    let validation = check.validate(body);
+    if (validation.ok && check.verifyEntry) {
+      const entry = await fetchImpl(new URL(readEntryScript(body), check.url), { signal });
+      if (!entry.ok || !/javascript|ecmascript/.test(entry.headers.get('content-type') ?? '')) {
+        validation = failed('frontend entry returned a non-JavaScript response');
+      }
+      await entry.body?.cancel();
+    }
 
     return {
       ok: validation.ok,
@@ -154,11 +183,16 @@ export function validateFrontendHtml(body) {
     return failed('frontend root mount is missing');
   }
 
-  if (!body.includes('/src/main.tsx')) {
+  if (!readEntryScript(body)) {
     return failed('frontend entry script is missing');
   }
 
   return passed();
+}
+
+function readEntryScript(body) {
+  const entry = body.match(/<script\b(?=[^>]*\btype="module")[^>]*\bsrc="([^"]+)"/)?.[1];
+  return entry === '/src/main.tsx' || /^\/assets\/[a-zA-Z0-9_.-]+\.js$/.test(entry ?? '') ? entry : null;
 }
 
 function validateSuccessEnvelope(body, label) {
@@ -175,17 +209,6 @@ function validateSuccessEnvelope(body, label) {
   }
 
   return passed();
-}
-
-async function fetchWithTimeout(url, { fetchImpl, timeoutMs }) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-
-  try {
-    return await fetchImpl(url, { signal: controller.signal });
-  } finally {
-    clearTimeout(timeout);
-  }
 }
 
 function isRecord(value) {

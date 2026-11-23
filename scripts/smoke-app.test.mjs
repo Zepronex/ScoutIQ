@@ -19,7 +19,8 @@ describe('smoke app helpers', () => {
     assert.deepEqual(config, {
       apiBaseUrl: 'http://127.0.0.1:4001',
       webBaseUrl: 'http://127.0.0.1:4000',
-      timeoutMs: 2500
+      timeoutMs: 2500,
+      requireReady: false
     });
   });
 
@@ -53,7 +54,19 @@ describe('smoke app helpers', () => {
 
   it('validates Vite SPA route HTML', () => {
     assert.equal(validateFrontendHtml('<div id="root"></div><script type="module" src="/src/main.tsx"></script>').ok, true);
+    assert.equal(validateFrontendHtml('<script type="module" crossorigin src="/assets/index.a123.js"></script><div id="root"></div>').ok, true);
     assert.equal(validateFrontendHtml('<html></html>').ok, false);
+  });
+
+  it('detects a production SPA rewrite swallowing its JavaScript entry', async () => {
+    const html = '<div id="root"></div><script type="module" src="/assets/index.abc.js"></script>';
+    const result = await runSmokeCheck({
+      name: 'Production web', url: 'http://localhost/', validate: validateFrontendHtml, verifyEntry: true
+    }, {
+      fetchImpl: async () => new Response(html, { headers: { 'Content-Type': 'text/html' } })
+    });
+    assert.equal(result.ok, false);
+    assert.match(result.error, /non-JavaScript/);
   });
 
   it('reports failed fetch responses without throwing', async () => {

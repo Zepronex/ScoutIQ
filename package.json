@@ -43,6 +43,7 @@
     "install:all": "pnpm install",
     "clean": "node -e \"const fs=require('fs'); for (const p of ['node_modules','apps/api/node_modules','apps/web/node_modules','apps/api/dist','apps/web/dist','apps/web/.vite']) fs.rmSync(p,{recursive:true,force:true});\"",
     "refresh:fpl": "node scripts/refresh-fpl.mjs",
+    "security:frontend": "node scripts/security/check-frontend-env.mjs",
     "test:browser": "node --test scripts/browser-app.test.mjs",
     "test:planning-db": "pnpm --filter @fpl-optimizer/api exec tsx --test ../../scripts/planning-db.test.ts"
   },

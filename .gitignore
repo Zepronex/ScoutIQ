@@ -126,3 +126,27 @@ temp/
 .Trashes
 ehthumbs.db
 Thumbs.db
+
+# Logs and local shell environment
+*.log
+.envrc
+.envrc.*
+
+# Credentials and local provider configuration
+credentials.json
+service-account*.json
+*.credentials
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+databricks.cfg
+.databrickscfg
+**/.databrickscfg
+.aws/
+.azure/
+.config/databricks/
+
+# Local assistant tooling
+.claude/

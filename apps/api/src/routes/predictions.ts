@@ -13,10 +13,10 @@ import { PLAYER_CANDIDATE_REQUIRED_COMMANDS, readBlankGameweekCandidates } from 
 import { predictionsToCandidates } from '../optimizer/predictionAdapter';
 
 const PositionSchema = z.enum(['GK', 'DEF', 'MID', 'FWD']);
-const PositiveIdSchema = z.coerce.number().int().positive();
+const PositiveIdSchema = z.coerce.number().int().positive().max(2_147_483_647);
 
 const topPredictionsQuerySchema = z.object({
-  gameweekId: z.coerce.number().int().positive().optional(),
+  gameweekId: PositiveIdSchema.optional(),
   position: PositionSchema.optional(),
   limit: z.coerce.number().int().min(1).max(100).optional().default(25)
 });

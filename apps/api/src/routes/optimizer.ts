@@ -18,18 +18,18 @@ import { PlayerCandidate, Squad, SquadSlot } from '../optimizer/types';
 
 const PositionSchema = z.enum(['GK', 'DEF', 'MID', 'FWD']);
 const AvailabilitySchema = z.enum(['available', 'doubtful', 'unavailable', 'unknown']);
-const PositiveIdSchema = z.coerce.number().int().positive();
+const PositiveIdSchema = z.coerce.number().int().positive().max(2_147_483_647);
 const MoneySchema = z.coerce.number().finite().min(0).max(1000);
 const FplMoneySchema = z.union([z.number(), z.string().regex(/^\d+(\.\d)?$/).transform(Number)])
   .pipe(z.number().min(0).max(1000).multipleOf(0.1));
 
 const PlayerCandidateSchema = z.object({
   playerId: PositiveIdSchema,
-  playerName: z.string().min(1),
+  playerName: z.string().min(1).max(100),
   position: PositionSchema,
   teamId: PositiveIdSchema,
-  teamName: z.string().min(1).optional(),
-  teamShortName: z.string().min(1).optional(),
+  teamName: z.string().min(1).max(100).optional(),
+  teamShortName: z.string().min(1).max(10).optional(),
   price: MoneySchema,
   predictedPoints: z.coerce.number().finite().nonnegative(),
   predictionRunId: PositiveIdSchema.optional(),

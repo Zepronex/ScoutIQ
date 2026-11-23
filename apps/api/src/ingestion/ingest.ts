@@ -26,6 +26,7 @@ export type IngestFplOptions = {
 export async function ingestOfficialFplData(options: IngestFplOptions): Promise<NormalizedFplDataset> {
   const client = options.client ?? axios.create({
     timeout: 15000,
+    maxContentLength: 32 * 1024 * 1024,
     headers: {
       'Accept': 'application/json',
       'User-Agent': 'ScoutIQ-Ingestion/1.0'

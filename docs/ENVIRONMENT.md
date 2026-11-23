@@ -10,7 +10,14 @@ This reference covers configuration used by the current ScoutIQ codebase and the
 | `PORT` | API server | Optional | Required when the host sets an expected port | No | No | Defaults to `3001` locally. |
 | `FRONTEND_URL` | API CORS | Optional | Required for a deployed frontend origin | No | No | Defaults to `http://localhost:3000`; set to the deployed frontend origin before production traffic. |
 | `SCOUTIQ_DATA_MODE` | API and UI | Optional | Use `fpl` for public FPL captures | No | No | Set `sample` for synthetic data. It displays a practice banner, disables public pick import and returns 503 readiness. |
-| `SCOUTIQ_TRUST_PROXY` | Express client IP | Optional | Only when behind a verified proxy | No | No | Comma-separated trusted IPs/CIDRs or `loopback`. Keep empty for direct traffic. |
+| `SCOUTIQ_TRUST_PROXY` | Express client IP | Optional | Required behind any proxy | No | No | Number of proxies in front (1 to 5), or comma-separated trusted IPs/CIDRs, or `loopback`. Keep empty for direct traffic. |
+| `SCOUTIQ_RATE_LIMIT` | API rate limits | Optional | Optional | No | No | API calls per address per 15 minutes. Default 300. |
+| `SCOUTIQ_GLOBAL_PLANNING_LIMIT` | API rate limits | Optional | Optional | No | No | Planning POSTs from all callers per 15 minutes. Default 900. |
+| `SCOUTIQ_GLOBAL_IMPORT_LIMIT` | API rate limits | Optional | Optional | No | No | Public team imports from all callers per 15 minutes. Default 150. |
+| `SCOUTIQ_AGENT_DAILY_LIMIT` | Explanation provider | Optional | Optional | Recommended | No | Paid provider calls per UTC day. Default 200. Past it the built-in text is used. |
+| `SCOUTIQ_PREDICTION_RUNS_KEPT` | Refresh job | Optional | Batch job only | No | No | Projection runs kept after each refresh. Default 30. |
+| `DATABASE_POOL_MAX` | API database pool | Optional | Optional | No | No | Connections held by the web service. Default 5. |
+| `SCOUTIQ_API_PORT` | Local dev launcher | Optional | No | No | No | Port for the API under `pnpm run dev`. Default 3001. |
 | `SCOUTIQ_APP_VERSION` | API health response | Optional | Optional | No | No | Adds a safe version label to `GET /api/health`. |
 | `DATABASE_URL` | API database config and database scripts | Optional when component variables are set | Required unless component variables are set | No | Yes | Preferred production setting because most managed PostgreSQL providers expose one URL. |
 | `DATABASE_SSL` | API database config | Optional | Required when the database provider requires SSL | No | No | Enables verified TLS. Use the provider’s CA via `NODE_EXTRA_CA_CERTS` when needed. |
@@ -43,20 +50,6 @@ This reference covers configuration used by the current ScoutIQ codebase and the
 | Variable | Current status | Notes |
 | --- | --- | --- |
 | `VITE_API_BASE_URL` | Build-time | Defaults to `/api`. For a separate API host use its public URL including `/api` and configure `FRONTEND_URL`. Treat all `VITE_*` values as public. |
-
-## Reserved Or Example-Only API Variables
-
-`apps/api/.env.example` includes operational placeholders that are not currently read by `apps/api/src`:
-
-- `FPL_API_BASE_URL`
-- `CACHE_TTL_SECONDS`
-- `RATE_LIMIT_WINDOW_MS`
-- `RATE_LIMIT_MAX_REQUESTS`
-- `RATE_LIMIT_STRICT_MAX`
-- `REQUEST_SIZE_LIMIT`
-- `LOG_LEVEL`
-
-Do not rely on these as active production controls until the API code reads and validates them.
 
 ## Pipeline And Data Paths
 

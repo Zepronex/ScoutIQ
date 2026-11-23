@@ -114,6 +114,7 @@ def build_expected_points_feature_files(
             rolling_window=rolling_window
         )
         messages.append(f'Prepared {len(training_rows)} historical training rows from {resolved_history_path}.')
+        prediction_rows = apply_history_form(prediction_rows, history_payload, rolling_window=rolling_window)
 
         if not prediction_rows and training_rows:
             latest_gameweek_id = max(int(row['upcoming_gameweek_id']) for row in training_rows)
@@ -237,13 +238,17 @@ def build_training_rows_from_player_history(
             target_minutes = int(history_row['minutes'])
             home_away = 'H' if bool(history_row['wasHome']) else 'A'
 
+            # FPL records the price a player had going into each fixture, so it is
+            # known before the deadline. Fall back to the previous value if absent.
+            fixture_price = float(history_row.get('price') or 0) or last_known_price
+
             row = {
                 'player_id': player_id,
                 'player_name': str(player['displayName']),
                 'position': require_position(player['position']),
                 'team_id': own_team_id,
                 'team_name': str(team['name']),
-                'price': round(last_known_price, 1),
+                'price': round(fixture_price, 1),
                 'availability_status': 'unknown',
                 'chance_of_playing_next_round': None,
                 'chance_of_playing_this_round': None,
@@ -278,9 +283,47 @@ def build_training_rows_from_player_history(
             prior_minutes.append(float(target_minutes))
             cumulative_points += target_points
             cumulative_minutes += target_minutes
-            last_known_price = float(history_row.get('price', last_known_price))
+            last_known_price = fixture_price
 
     return sorted(rows, key=lambda row: (int(row['upcoming_gameweek_id']), int(row['player_id']), int(row['fixture_id'])))
+
+
+def apply_history_form(
+    prediction_rows: list[JsonObject],
+    history_payload: JsonObject,
+    *,
+    rolling_window: int = 3
+) -> list[JsonObject]:
+    """Give upcoming-fixture rows the same form features the model was trained on.
+
+    The snapshot only carries FPL's 30-day form and season totals. Training rows
+    use averages over a player's previous fixtures, so serving rows are rebuilt
+    from the same history to keep both on one definition.
+    """
+    history_by_player_id = normalize_history_rows_by_player(history_payload)
+    output: list[JsonObject] = []
+    for row in prediction_rows:
+        history = sorted(
+            history_by_player_id.get(int(row['player_id']), []),
+            key=lambda item: (int(item['gameweekId']), int(item['fixtureId']))
+        )
+        played = [item for item in history if int(item['gameweekId']) < int(row['upcoming_gameweek_id'])]
+        if not played:
+            output.append(row)
+            continue
+        points = [float(item['totalPoints']) for item in played]
+        minutes = [float(item['minutes']) for item in played]
+        updated = {
+            **row,
+            'completed_gameweeks': len(played),
+            'season_points_average': round(mean(points), 4),
+            'season_minutes_average': round(mean(minutes), 4),
+            'rolling_points_average': round(mean(points[-rolling_window:]), 4),
+            'rolling_minutes_average': round(mean(minutes[-rolling_window:]), 4)
+        }
+        validate_prediction_feature_row(updated)
+        output.append(updated)
+    return output
 
 
 def build_snapshot_feature_batch(snapshot_dir: Path) -> SnapshotFeatureBatch:

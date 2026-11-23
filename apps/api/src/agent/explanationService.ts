@@ -1,3 +1,4 @@
+import { createDailyBudget, readLimit } from '../lib/guards';
 import { AgentConfig, readAgentConfig } from './config';
 import { buildFallbackExplanation } from './fallbackExplanation';
 import {
@@ -38,7 +39,19 @@ export type FetchLike = (
 type ExplanationServiceOptions = {
   config?: AgentConfig;
   fetchImpl?: FetchLike;
+  budget?: { tryConsume(): boolean };
 };
+
+// Provider calls are billed per request. This counts every caller together, so
+// spend per day is bounded whatever the number of client addresses.
+const DEFAULT_DAILY_PROVIDER_CALLS = 200;
+let sharedBudget: ReturnType<typeof createDailyBudget> | undefined;
+function providerBudget() {
+  sharedBudget ??= createDailyBudget(
+    readLimit(process.env.SCOUTIQ_AGENT_DAILY_LIMIT, DEFAULT_DAILY_PROVIDER_CALLS, 'SCOUTIQ_AGENT_DAILY_LIMIT')
+  );
+  return sharedBudget;
+}
 
 const RESPONSE_FORMAT_NAME = 'scoutiq_recommendation_explanation';
 // An explanation is ten short fields. These caps bound what one request can cost.
@@ -60,6 +73,13 @@ export async function explainRecommendation(
     return buildFallbackExplanation(input, fallbackReasonMessage(config.reason), {
       fallbackReasonCode: config.reason,
       providerConfigured: false
+    });
+  }
+
+  if (!(options.budget ?? providerBudget()).tryConsume()) {
+    return buildFallbackExplanation(input, fallbackReasonMessage('daily_limit_reached'), {
+      fallbackReasonCode: 'daily_limit_reached',
+      providerConfigured: true
     });
   }
 
@@ -389,6 +409,8 @@ function fallbackReasonMessage(reason: AgentFallbackReasonCode): string {
       return 'Live explanation provider was unavailable; deterministic fallback used.';
     case 'schema_validation_failed':
       return 'Provider response failed schema validation; deterministic fallback used.';
+    case 'daily_limit_reached':
+      return 'The daily limit for generated explanations was reached; deterministic fallback used.';
     case 'hallucination_guard_failed':
       return 'Provider response failed grounding checks; deterministic fallback used.';
   }

@@ -3,6 +3,7 @@ import { Router, type Router as ExpressRouter } from 'express';
 import { z } from 'zod';
 import { getServerPool, Queryable } from '../db/client';
 import { readSquadBuilderPlayers } from '../db/playerQueries';
+import { createTtlCache } from '../lib/guards';
 import { EnrichedPlayer, Squad } from '../types';
 
 const entryRequest = z.object({ entryId: z.number().int().min(1).max(2_147_483_647) }).strict();
@@ -12,6 +13,8 @@ const picksResponse = z.object({
     position: z.number().int().min(1).max(15)
   })).length(15)
 });
+
+const PICKS_CACHE_MS = 10 * 60 * 1000;
 
 type EntryProvider = (entryId: number, gameweekId: number) => Promise<unknown>;
 
@@ -23,6 +26,9 @@ class EntryImportError extends Error {
 
 export function createEntriesRouter(client: Queryable = getServerPool(), readPicks: EntryProvider = readPublicPicks): ExpressRouter {
   const router: ExpressRouter = Router();
+  // Public picks are fixed once a deadline passes. Remember recent lookups so
+  // repeated imports of the same team do not reach the FPL servers again.
+  const picksCache = createTtlCache<unknown>(PICKS_CACHE_MS, 500);
   router.post('/import', async (req, res) => {
     const parsed = entryRequest.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ success: false, error: 'Enter a valid numeric FPL team ID.' });
@@ -43,7 +49,10 @@ export function createEntriesRouter(client: Queryable = getServerPool(), readPic
       `);
       if (!gameweek) throw new EntryImportError(409, 'There is no recent FPL deadline to import. You can add players manually.');
 
-      const received = await readPicks(parsed.data.entryId, gameweek.id);
+      const received = await picksCache.get(
+        `${gameweek.snapshot_id}:${gameweek.id}:${parsed.data.entryId}`,
+        () => readPicks(parsed.data.entryId, gameweek.id)
+      );
       const picks = picksResponse.safeParse(received);
       if (!picks.success ||
         new Set(picks.data.picks.map(pick => pick.element)).size !== 15 ||

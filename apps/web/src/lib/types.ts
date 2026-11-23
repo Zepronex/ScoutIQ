@@ -259,6 +259,7 @@ export type AgentFallbackReasonCode =
   | 'missing_openai_config'
   | 'missing_azure_openai_config'
   | 'missing_provider_config'
+  | 'daily_limit_reached'
   | 'provider_error'
   | 'schema_validation_failed'
   | 'hallucination_guard_failed';

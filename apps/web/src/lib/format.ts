@@ -1,121 +1,10 @@
-import { PlayerLabel, Pos } from './types';
+import { Pos } from './types';
 
 export const formatPrice = (price: number): string => {
   return `${price < 0 ? '−' : ''}£${Math.abs(price).toFixed(1)}m`;
 };
 
-export const formatScore = (score: number): string => {
-  // Round to avoid floating point precision issues
-  const rounded = Math.round(score * 10) / 10;
-  
-  // If the decimal part is 0, show as whole number
-  if (rounded % 1 === 0) {
-    return rounded.toFixed(0);
-  }
-  
-  // Otherwise show with 1 decimal place
-  return rounded.toFixed(1);
-};
-
-export const formatDelta = (delta: number): string => {
-  const sign = delta >= 0 ? '+' : '';
-  // Round to avoid floating point precision issues
-  const rounded = Math.round(delta * 10) / 10;
-  
-  // If the decimal part is 0, show as whole number
-  if (rounded % 1 === 0) {
-    return `${sign}${rounded.toFixed(0)}`;
-  }
-  
-  // Otherwise show with 1 decimal place
-  return `${sign}${rounded.toFixed(1)}`;
-};
-
-export const getLabelColor = (label: PlayerLabel): string => {
-  switch (label) {
-    case 'perfect':
-      return 'bg-green-100 text-green-800 border-green-200';
-    case 'good':
-      return 'bg-blue-100 text-blue-800 border-blue-200';
-    case 'poor':
-      return 'bg-yellow-100 text-yellow-800 border-yellow-200';
-    case 'urgent':
-      return 'bg-red-100 text-red-800 border-red-200';
-    case 'not-playing':
-      return 'bg-red-900 text-red-100 border-red-800';
-    default:
-      return 'bg-gray-100 text-gray-800 border-gray-200';
-  }
-};
-
-export const getLabelText = (label: PlayerLabel): string => {
-  switch (label) {
-    case 'perfect':
-      return 'Perfect';
-    case 'good':
-      return 'Good';
-    case 'poor':
-      return 'Poor';
-    case 'urgent':
-      return 'Urgent';
-    case 'not-playing':
-      return 'Not Playing';
-    default:
-      return 'Unknown';
-  }
-};
-
-export const getPositionColor = (position: string): string => {
-  switch (position) {
-    case 'GK':
-      return 'bg-gray-100 text-gray-800';
-    case 'DEF':
-      return 'bg-blue-100 text-blue-800';
-    case 'MID':
-      return 'bg-green-100 text-green-800';
-    case 'FWD':
-      return 'bg-red-100 text-red-800';
-    default:
-      return 'bg-gray-100 text-gray-800';
-  }
-};
-
-export const getDifficultyColor = (difficulty: number): string => {
-  if (difficulty <= 2) return 'bg-green-100 text-green-800';
-  if (difficulty <= 3) return 'bg-yellow-100 text-yellow-800';
-  return 'bg-red-100 text-red-800';
-};
-
-export const getDifficultyText = (difficulty: number): string => {
-  if (difficulty <= 2) return 'Easy';
-  if (difficulty <= 3) return 'Medium';
-  return 'Hard';
-};
-
-export const formatForm = (form: number): string => {
-  return form.toFixed(1);
-};
-
-export const formatXG = (xg: number): string => {
-  return xg.toFixed(2);
-};
-
-export const formatXA = (xa: number): string => {
-  return xa.toFixed(2);
-};
-
-export const formatMinutes = (minutes: number): string => {
-  return `${minutes}min`;
-};
-
-type PricedSlot = { price: number };
 type FormationSlot = { pos: Pos };
-
-export const calculateTotalSquadValue = (squad: { startingXI: PricedSlot[]; bench: PricedSlot[]; bank: number }): number => {
-  const totalPlayerValue = [...squad.startingXI, ...squad.bench]
-    .reduce((sum, slot) => sum + slot.price, 0);
-  return totalPlayerValue + squad.bank;
-};
 
 export const isValidFormation = (startingXI: FormationSlot[]): boolean => {
   if (startingXI.length !== 11) return false;
@@ -162,9 +51,33 @@ export function normalizePlayerSearch(value: string): string {
   return value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
 }
 
-const pointsFormatter = new Intl.NumberFormat(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 2 });
+// The app is written in British English, so figures and dates follow en-GB
+// whatever the browser locale. Times are still shown in the visitor's zone.
+const pointsFormatter = new Intl.NumberFormat('en-GB', { minimumFractionDigits: 1, maximumFractionDigits: 2 });
+const onePlace = new Intl.NumberFormat('en-GB', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+const wholeNumber = new Intl.NumberFormat('en-GB', { maximumFractionDigits: 0 });
+const dateTime = new Intl.DateTimeFormat('en-GB', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+const shortDateTime = new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
 
 export const formatPoints = (points: number) => pointsFormatter.format(points);
+/** A single player's projection. One decimal is as precise as the model warrants. */
+export const formatXp = (points: number) => onePlace.format(points);
+export const formatOnePlace = (value: number) => onePlace.format(value);
+export const formatCount = (value: number) => wholeNumber.format(value);
+export const formatSigned = (value: number) => `${value > 0 ? '+' : value < 0 ? '−' : ''}${pointsFormatter.format(Math.abs(value))}`;
+export const formatDateTime = (value: string | Date) => dateTime.format(new Date(value));
+export const formatShortDateTime = (value: string | Date) => shortDateTime.format(new Date(value));
+
+/** "3 days 4 hrs", "5 hrs 12 min" or "12 min" until a deadline; null once it has passed. */
+export function formatCountdown(deadline: string, now = Date.now()): string | null {
+  const minutes = Math.floor((Date.parse(deadline) - now) / 60_000);
+  if (!Number.isFinite(minutes) || minutes <= 0) return null;
+  const days = Math.floor(minutes / 1440);
+  const hours = Math.floor((minutes % 1440) / 60);
+  if (days > 0) return `${days} ${days === 1 ? 'day' : 'days'} ${hours} ${hours === 1 ? 'hr' : 'hrs'}`;
+  if (hours > 0) return `${hours} ${hours === 1 ? 'hr' : 'hrs'} ${minutes % 60} min`;
+  return `${minutes} min`;
+}
 
 export function predictionAvailability(player: { fixtureCount?: number; availability?: string }): string {
   if (player.fixtureCount === 0) return 'No fixture';

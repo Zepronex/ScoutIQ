@@ -1,5 +1,7 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
+import '@fontsource-variable/hanken-grotesk/wght.css'
+import '@fontsource-variable/archivo/standard.css'
 import App from './App.tsx'
 import './index.css'
 
@@ -8,4 +10,3 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
     <App />
   </React.StrictMode>,
 )
-
